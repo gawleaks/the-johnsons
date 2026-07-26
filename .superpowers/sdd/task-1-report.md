@@ -48,3 +48,23 @@ Output summary:
 
 - The package exposes `dist/cli.js` via `bin`, but the CLI source is intentionally not part of Task 1 yet.
 - `npm install` reported existing package vulnerabilities; they were not addressed because they are outside this task's scope.
+
+## Review-fix evidence
+
+- Updated `package.json` to include the exact `dev: "tsx src/cli.ts"` script and direct `tsx: "4.21.0"` dev dependency.
+- Refreshed `package-lock.json` with `npm install`.
+- Added `test/package/metadata.test.ts` to assert the required package metadata.
+
+Commands:
+```bash
+npm install
+npm test -- test/domain/workflow.test.ts test/package/metadata.test.ts
+npm run typecheck
+npm run build
+```
+
+Output summary:
+- `npm install` succeeded and regenerated the lockfile.
+- Focused test run passed: 2 files, 2 tests, 0 failures.
+- TypeScript typecheck exited 0.
+- TypeScript build exited 0.
