@@ -37,7 +37,7 @@ export type Transition =
   | { readonly type: "specification-created" }
   | { readonly type: "specification-approved" }
   | { readonly type: "plan-created"; readonly chunks: ReadonlyArray<ChunkState> }
-  | { readonly type: "developer-finished" }
+  | { readonly type: "developer-finished"; readonly deviated?: boolean }
   | { readonly type: "reviewed"; readonly verdict: ReviewVerdict }
   | { readonly type: "user-escalated-resolution"; readonly resume: boolean };
 
