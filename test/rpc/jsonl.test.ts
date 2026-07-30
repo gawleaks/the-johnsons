@@ -28,6 +28,14 @@ describe("JsonlDecoder", () => {
     expect(() => decoder.push('{not json}\n')).toThrow("Invalid RPC JSON");
   });
 
+  it("preserves a split multibyte UTF-8 character across Buffer chunks", () => {
+    const decoder = new JsonlDecoder();
+    const payload = Buffer.from('{"text":"é"}\n');
+
+    expect(decoder.push(payload.subarray(0, 10))).toEqual([]);
+    expect(decoder.push(payload.subarray(10))).toEqual([{ text: "é" }]);
+  });
+
   it("buffers an incomplete final record", () => {
     const decoder = new JsonlDecoder();
 

@@ -1,4 +1,4 @@
-const toText = (chunk: Buffer | string): string => (typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+import { StringDecoder } from "node:string_decoder";
 
 const parseRecord = (record: string): unknown => {
   try {
@@ -10,9 +10,10 @@ const parseRecord = (record: string): unknown => {
 
 export class JsonlDecoder {
   #buffer = "";
+  #decoder = new StringDecoder("utf8");
 
   push(chunk: Buffer | string): unknown[] {
-    this.#buffer += toText(chunk);
+    this.#buffer += typeof chunk === "string" ? chunk : this.#decoder.write(chunk);
 
     const parts = this.#buffer.split("\n");
     this.#buffer = parts.pop() ?? "";
@@ -21,6 +22,8 @@ export class JsonlDecoder {
   }
 
   finish(): unknown[] {
+    this.#buffer += this.#decoder.end();
+
     return [];
   }
 }
