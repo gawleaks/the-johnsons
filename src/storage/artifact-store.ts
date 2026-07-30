@@ -78,10 +78,53 @@ const parseState = (value: unknown): RunState => {
   };
 };
 
-const runRoot = (workspace: string, runId: string): string => join(workspace, ".johnsons", "runs", runId);
+const safeRunId = (runId: string): string => {
+  if (runId.length === 0 || runId === "." || runId === ".." || runId.includes("/") || runId.includes("\\")) {
+    throw new Error(`Invalid run id: ${runId}`);
+  }
+
+  return runId;
+};
+
+const runRoot = (workspace: string, runId: string): string => join(workspace, ".johnsons", "runs", safeRunId(runId));
 
 const artifactPath = (workspace: string, runId: string, name: string): string =>
   safeRelativePath(runRoot(workspace, runId), name);
+
+const validateInitialIdentity = (workspace: string, runId: string, initial: RunState): void => {
+  if (initial.runId !== runId || initial.workspace !== workspace) {
+    throw new Error("Initial run state does not match artifact store identity");
+  }
+};
+
+const validateLoadedState = (workspace: string, runId: string, state: RunState): void => {
+  if (state.runId !== runId || state.workspace !== workspace) {
+    throw new Error("Invalid run state");
+  }
+
+  const activeChunk = state.chunks.find((chunk) => chunk.id === state.activeChunkId);
+
+  if (state.activeChunkId === undefined) {
+    if (state.phase === "developing" || state.phase === "reviewing" || state.phase === "escalated") {
+      throw new Error("Invalid run state");
+    }
+
+    return;
+  }
+
+  if (!activeChunk) {
+    throw new Error("Invalid run state");
+  }
+
+  if (
+    (state.phase === "developing" && activeChunk.status !== "developing") ||
+    (state.phase === "reviewing" && activeChunk.status !== "reviewing") ||
+    (state.phase === "escalated" && activeChunk.status !== "escalated") ||
+    (state.phase !== "developing" && state.phase !== "reviewing" && state.phase !== "escalated")
+  ) {
+    throw new Error("Invalid run state");
+  }
+};
 
 export class ArtifactStore {
   private constructor(
@@ -90,7 +133,9 @@ export class ArtifactStore {
   ) {}
 
   static async create(workspace: string, runId: string, initial: RunState): Promise<ArtifactStore> {
-    const store = new ArtifactStore(workspace, runId);
+    const store = new ArtifactStore(workspace, safeRunId(runId));
+
+    validateInitialIdentity(workspace, runId, initial);
 
     await store.writeJson(stateFileName, initial);
 
@@ -112,7 +157,10 @@ export class ArtifactStore {
 
   async loadState(): Promise<RunState> {
     const content = await readFile(artifactPath(this.workspace, this.runId, stateFileName), "utf8");
+    const state = parseState(JSON.parse(content));
 
-    return parseState(JSON.parse(content));
+    validateLoadedState(this.workspace, this.runId, state);
+
+    return state;
   }
 }

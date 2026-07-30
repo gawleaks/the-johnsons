@@ -60,6 +60,60 @@ describe("ArtifactStore", () => {
     });
   });
 
+  it("rejects run id traversal on create", async () => {
+    await withTempDir(async (workspace) => {
+      const initial = createRunState("../run-1", workspace);
+
+      await expect(ArtifactStore.create(workspace, "../run-1", initial)).rejects.toThrow();
+    });
+  });
+
+  it("rejects initial run identity mismatches", async () => {
+    await withTempDir(async (workspace) => {
+      const initial = createRunState("run-1", `${workspace}/other`);
+
+      await expect(ArtifactStore.create(workspace, "run-1", initial)).rejects.toThrow();
+    });
+  });
+
+  it("rejects semantically invalid state when the active chunk is missing", async () => {
+    await withTempDir(async (workspace) => {
+      const runId = "run-1";
+      const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+      await writeFile(
+        statePath(workspace, runId),
+        JSON.stringify({
+          ...createRunState(runId, workspace),
+          phase: "developing",
+          activeChunkId: "chunk-1",
+          chunks: [],
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadState()).rejects.toThrow();
+    });
+  });
+
+  it("rejects semantically invalid state when the active chunk does not fit the phase", async () => {
+    await withTempDir(async (workspace) => {
+      const runId = "run-1";
+      const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+      await writeFile(
+        statePath(workspace, runId),
+        JSON.stringify({
+          ...createRunState(runId, workspace),
+          phase: "completed",
+          activeChunkId: "chunk-1",
+          chunks: [{ id: "chunk-1", status: "approved", reviewAttempts: 0 }],
+        }),
+        "utf8",
+      );
+
+      await expect(store.loadState()).rejects.toThrow();
+    });
+  });
+
   it("rejects artifact names that escape the run directory", async () => {
     await withTempDir(async (workspace) => {
       const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));

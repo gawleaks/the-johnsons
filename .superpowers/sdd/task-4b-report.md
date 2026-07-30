@@ -28,3 +28,27 @@ Result:
 ## Notes
 - Implemented only `src/storage/artifact-store.ts` and `test/storage/artifact-store.test.ts`.
 - Artifact state is authoritative in `state.json`; transition history is append-only in `transitions.jsonl`.
+
+## Reviewer-fix evidence
+
+### RED
+Command:
+`npm test -- test/storage/artifact-store.test.ts`
+
+Result before fix:
+- 4 failing tests
+- run id traversal on create resolved instead of rejecting
+- initial run identity mismatch resolved instead of rejecting
+- active chunk missing from chunks resolved instead of rejecting
+- active chunk incompatible with phase resolved instead of rejecting
+
+### GREEN
+Command:
+`npm test -- test/storage/artifact-store.test.ts`
+
+Result after fix:
+- 9 passed / 9 total
+
+### Verification
+- `npm run typecheck` ✅
+- `npm run build` ✅
