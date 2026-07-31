@@ -53,6 +53,11 @@ const handlePrompt = (promptId) => {
     return;
   }
 
+  if (scenario === "clean") {
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "timeout") {
     setInterval(() => {}, 1_000);
   }
