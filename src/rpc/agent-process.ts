@@ -83,8 +83,6 @@ export class PiRpcAgentProcess implements AgentProcess {
   #requestCounter = 0;
   #currentPrompt: PromptState | undefined;
   #closing = false;
-  #exitPromise: Promise<void> | undefined;
-  #exitReject: ((error: Error) => void) | undefined;
 
   constructor(options: PiRpcAgentProcessOptions) {
     this.#options = {
@@ -123,9 +121,6 @@ export class PiRpcAgentProcess implements AgentProcess {
       void this.#handleExit(code ?? 0);
     });
 
-    this.#exitPromise = new Promise<void>((_, reject) => {
-      this.#exitReject = reject;
-    });
   }
 
   async prompt(message: string): Promise<AgentProcessResult> {
@@ -230,18 +225,15 @@ export class PiRpcAgentProcess implements AgentProcess {
       this.#child?.kill("SIGTERM");
     }, this.#options.abortGraceMs);
 
-    await this.#failCurrentPrompt(new RpcTimeoutError());
+    await this.#failCurrentPrompt(new RpcTimeoutError(), false);
   }
 
   async #handleExit(code: number): Promise<void> {
-    if (this.#currentPrompt && !this.#currentPrompt.settled && !this.#closing) {
+    if (this.#currentPrompt && !this.#currentPrompt.settled) {
       await this.#failCurrentPrompt(new PrematureNonzeroExitError(`Pi RPC exited before settling (${code})`));
       return;
     }
 
-    if (code !== 0 && this.#exitReject) {
-      this.#exitReject(new PrematureNonzeroExitError(`Pi RPC exited with code ${code}`));
-    }
   }
 
   async #finishCurrentPrompt(): Promise<void> {
@@ -253,7 +245,7 @@ export class PiRpcAgentProcess implements AgentProcess {
     prompt.resolve({ messages: prompt.messages, events: prompt.events, stderr: prompt.stderr });
   }
 
-  async #failCurrentPrompt(error: Error): Promise<void> {
+  async #failCurrentPrompt(error: Error, terminateChild = true): Promise<void> {
     const prompt = this.#currentPrompt;
     if (!prompt) return;
 
@@ -261,7 +253,7 @@ export class PiRpcAgentProcess implements AgentProcess {
     this.#currentPrompt = undefined;
     prompt.reject(error);
 
-    if (!this.#closing) {
+    if (terminateChild && !this.#closing) {
       this.#child?.kill("SIGTERM");
     }
   }

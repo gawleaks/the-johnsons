@@ -5,6 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 const [, , command, ...args] = process.argv;
 const scenario = process.env.PI_FAKE_RPC_SCENARIO ?? "success";
 const stdinLog = process.env.PI_FAKE_RPC_STDIN_LOG;
+const signalLog = process.env.PI_FAKE_RPC_SIGNAL_LOG;
 const decoder = new StringDecoder("utf8");
 let buffer = "";
 
@@ -13,8 +14,22 @@ const logStdin = (line) => {
   appendFileSync(stdinLog, `${line}\n`);
 };
 
+if (stdinLog) {
+  appendFileSync(stdinLog, "");
+}
+
+if (signalLog) {
+  appendFileSync(signalLog, "");
+}
+
 const writeJson = (value) => {
   process.stdout.write(`${JSON.stringify(value)}\n`);
+};
+
+const logSignal = (line) => {
+  if (!signalLog) return;
+
+  appendFileSync(signalLog, `${line}\n`);
 };
 
 const handlePrompt = (promptId) => {
@@ -43,7 +58,10 @@ const handlePrompt = (promptId) => {
   }
 };
 
-process.on("SIGTERM", () => process.exit(0));
+process.on("SIGTERM", () => {
+  logSignal("SIGTERM");
+  process.exit(0);
+});
 
 process.stdin.on("data", (chunk) => {
   buffer += typeof chunk === "string" ? chunk : decoder.write(chunk);

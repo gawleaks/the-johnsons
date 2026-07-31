@@ -3,31 +3,30 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 const helperPath = fileURLToPath(new URL("../helpers/fake-pi-rpc.mjs", import.meta.url));
 
-const actualSpawn = vi.hoisted(() => ({
-  spawn: undefined as unknown as typeof import("node:child_process").spawn,
-}));
-
 const spawnCalls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+const spawnedChildren: ChildProcessWithoutNullStreams[] = [];
 
 vi.mock("node:child_process", async () => {
   const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
-  actualSpawn.spawn = actual.spawn;
-
   return {
     ...actual,
     spawn: (command: string, args: ReadonlyArray<string>, options: any) => {
       spawnCalls.push({ command, args });
 
-      return actual.spawn(process.execPath, [helperPath, command, ...args], {
+      const child = actual.spawn(process.execPath, [helperPath, command, ...args], {
         ...options,
         env: {
           ...process.env,
           ...options?.env,
         },
       });
+
+      spawnedChildren.push(child as ChildProcessWithoutNullStreams);
+      return child;
     },
   };
 });
@@ -55,11 +54,34 @@ const createProcess = (root: string) =>
     abortGraceMs: 20,
   });
 
+const signalLog = (root: string): string => join(root, "signal.log");
+
+const readSignalLog = async (root: string): Promise<string> => {
+  try {
+    return await readFile(signalLog(root), "utf8");
+  } catch {
+    return "";
+  }
+};
+
+const isAlive = (pid: number | undefined): boolean => {
+  if (!pid) return false;
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 describe("PiRpcAgentProcess", () => {
   beforeEach(() => {
     spawnCalls.length = 0;
+    spawnedChildren.length = 0;
     delete process.env.PI_FAKE_RPC_SCENARIO;
     delete process.env.PI_FAKE_RPC_STDIN_LOG;
+    delete process.env.PI_FAKE_RPC_SIGNAL_LOG;
   });
 
   it("resolves prompt after prompt acceptance and agent_settled", async () => {
@@ -95,18 +117,41 @@ describe("PiRpcAgentProcess", () => {
 
   it("aborts on timeout before terminating the child", async () => {
     await withTempDir(async (root) => {
-      const stdinLog = join(root, "stdin.log");
       process.env.PI_FAKE_RPC_SCENARIO = "timeout";
-      process.env.PI_FAKE_RPC_STDIN_LOG = stdinLog;
+      process.env.PI_FAKE_RPC_STDIN_LOG = join(root, "stdin.log");
+      process.env.PI_FAKE_RPC_SIGNAL_LOG = signalLog(root);
 
       const agent = createProcess(root);
       await agent.start();
+      const prompt = agent.prompt("hello");
+      const pid = spawnedChildren[0]?.pid;
+      const timeoutAssertion = expect(prompt).rejects.toBeInstanceOf(RpcTimeoutError);
 
-      await expect(agent.prompt("hello")).rejects.toBeInstanceOf(RpcTimeoutError);
+      await timeoutAssertion;
+      expect(await readFile(join(root, "stdin.log"), "utf8")).toContain('"type":"abort"');
+      expect(await readSignalLog(root)).toBe("");
+      expect(isAlive(pid)).toBe(true);
 
-      const stdin = await readFile(stdinLog, "utf8");
-      expect(stdin).toContain('"type":"prompt"');
-      expect(stdin).toContain('"type":"abort"');
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      expect(await readSignalLog(root)).toContain("SIGTERM");
+      expect(isAlive(pid)).toBe(false);
+    });
+  });
+
+  it("settles a pending prompt when closed", async () => {
+    await withTempDir(async (root) => {
+      process.env.PI_FAKE_RPC_SCENARIO = "timeout";
+      process.env.PI_FAKE_RPC_SIGNAL_LOG = signalLog(root);
+
+      const agent = createProcess(root);
+      await agent.start();
+      const prompt = agent.prompt("hello");
+      const closing = agent.close();
+      const promptAssertion = expect(prompt).rejects.toBeInstanceOf(PrematureNonzeroExitError);
+
+      await promptAssertion;
+      await expect(closing).resolves.toBeUndefined();
     });
   });
 
