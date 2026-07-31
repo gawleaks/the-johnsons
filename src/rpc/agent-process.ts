@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { JsonlDecoder } from "./jsonl.js";
+import { Buffer } from "node:buffer";
 
 export interface AgentProcessResult {
   readonly messages: ReadonlyArray<unknown>;
@@ -24,7 +25,10 @@ export interface PiRpcAgentProcessOptions {
   readonly abortGraceMs?: number;
 }
 
-export type RpcEvent = { readonly type: string; readonly [key: string]: unknown };
+export type RpcEvent = {
+  readonly type: string;
+  readonly [key: string]: unknown;
+};
 
 export class MalformedRpcOutputError extends Error {
   constructor(message = "Malformed RPC output") {
@@ -33,10 +37,24 @@ export class MalformedRpcOutputError extends Error {
   }
 }
 
-export class PrematureNonzeroExitError extends Error {
+export class PrematureExitError extends Error {
+  constructor(message = "Pi RPC exited before settling") {
+    super(message);
+    this.name = "PrematureExitError";
+  }
+}
+
+export class PrematureNonzeroExitError extends PrematureExitError {
   constructor(message = "Pi RPC exited before settling") {
     super(message);
     this.name = "PrematureNonzeroExitError";
+  }
+}
+
+export class AgentProcessClosedError extends Error {
+  constructor(message = "Pi RPC process was closed") {
+    super(message);
+    this.name = "AgentProcessClosedError";
   }
 }
 
@@ -61,7 +79,12 @@ type PromptState = {
 };
 
 const parseEvent = (record: unknown): RpcEvent => {
-  if (!record || typeof record !== "object" || !("type" in record) || typeof record.type !== "string") {
+  if (
+    !record ||
+    typeof record !== "object" ||
+    !("type" in record) ||
+    typeof record.type !== "string"
+  ) {
     throw new MalformedRpcOutputError();
   }
 
@@ -71,11 +94,16 @@ const parseEvent = (record: unknown): RpcEvent => {
 const isResponseFor = (event: RpcEvent, id: string): boolean =>
   event.type === "response" && event.id === id && event.command === "prompt";
 
-const hasArrayMessages = (event: RpcEvent): event is RpcEvent & { readonly messages: ReadonlyArray<unknown> } =>
+const hasArrayMessages = (
+  event: RpcEvent,
+): event is RpcEvent & { readonly messages: ReadonlyArray<unknown> } =>
   Array.isArray(event.messages);
 
 export class PiRpcAgentProcess implements AgentProcess {
-  #options: Required<Pick<PiRpcAgentProcessOptions, "timeoutMs" | "abortGraceMs">> & PiRpcAgentProcessOptions;
+  #options: Required<
+    Pick<PiRpcAgentProcessOptions, "timeoutMs" | "abortGraceMs">
+  > &
+    PiRpcAgentProcessOptions;
   #child: ChildProcessWithoutNullStreams | undefined;
   #stdoutDecoder = new JsonlDecoder();
   #stderrDecoder = new StringDecoder("utf8");
@@ -97,7 +125,16 @@ export class PiRpcAgentProcess implements AgentProcess {
 
     this.#child = spawn(
       "pi",
-      ["--mode", "rpc", "--session-dir", this.#options.sessionDir, "--name", this.#options.name, "--model", this.#options.model],
+      [
+        "--mode",
+        "rpc",
+        "--session-dir",
+        this.#options.sessionDir,
+        "--name",
+        this.#options.name,
+        "--model",
+        this.#options.model,
+      ],
       { stdio: ["pipe", "pipe", "pipe"] },
     );
 
@@ -105,22 +142,31 @@ export class PiRpcAgentProcess implements AgentProcess {
       try {
         this.#handleStdout(chunk);
       } catch (error) {
-        const rpcError = error instanceof Error && error.message === "Invalid RPC JSON" ? new MalformedRpcOutputError() : error;
-        void this.#failCurrentPrompt(rpcError instanceof Error ? rpcError : new MalformedRpcOutputError());
+        const rpcError =
+          error instanceof Error && error.message === "Invalid RPC JSON"
+            ? new MalformedRpcOutputError()
+            : error;
+        void this.#failCurrentPrompt(
+          rpcError instanceof Error ? rpcError : new MalformedRpcOutputError(),
+        );
       }
     });
 
     this.#child.stderr.on("data", (chunk: Buffer | string) => {
-      this.#stderr += this.#stderrDecoder.write(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+      const text = this.#stderrDecoder.write(
+        typeof chunk === "string" ? Buffer.from(chunk) : chunk,
+      );
+
+      this.#stderr += text;
+
       if (this.#currentPrompt) {
-        this.#currentPrompt.stderr += this.#stderrDecoder.write(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+        this.#currentPrompt.stderr += text;
       }
     });
 
-    this.#child.once("exit", (code) => {
+    this.#child.once("exit", (code: number | null) => {
       void this.#handleExit(code ?? 0);
     });
-
   }
 
   async prompt(message: string): Promise<AgentProcessResult> {
@@ -169,6 +215,7 @@ export class PiRpcAgentProcess implements AgentProcess {
 
     if (!child) return;
 
+    await this.#failCurrentPrompt(new AgentProcessClosedError(), false);
     child.kill("SIGTERM");
     await new Promise<void>((resolve) => child.once("exit", () => resolve()));
     this.#child = undefined;
@@ -200,7 +247,9 @@ export class PiRpcAgentProcess implements AgentProcess {
 
         if (isResponseFor(event, prompt.id)) {
           if (event.success === false) {
-            void this.#failCurrentPrompt(new Error(String(event.error ?? "Prompt rejected")));
+            void this.#failCurrentPrompt(
+              new Error(String(event.error ?? "Prompt rejected")),
+            );
             return;
           }
 
@@ -230,10 +279,13 @@ export class PiRpcAgentProcess implements AgentProcess {
 
   async #handleExit(code: number): Promise<void> {
     if (this.#currentPrompt && !this.#currentPrompt.settled) {
-      await this.#failCurrentPrompt(new PrematureNonzeroExitError(`Pi RPC exited before settling (${code})`));
-      return;
+      const error = this.#closing
+        ? new AgentProcessClosedError()
+        : code === 0
+          ? new PrematureExitError(`Pi RPC exited before settling (${code})`)
+          : new PrematureNonzeroExitError(`Pi RPC exited before settling (${code})`);
+      await this.#failCurrentPrompt(error, false);
     }
-
   }
 
   async #finishCurrentPrompt(): Promise<void> {
@@ -242,7 +294,11 @@ export class PiRpcAgentProcess implements AgentProcess {
 
     if (prompt.timer) clearTimeout(prompt.timer);
     this.#currentPrompt = undefined;
-    prompt.resolve({ messages: prompt.messages, events: prompt.events, stderr: prompt.stderr });
+    prompt.resolve({
+      messages: prompt.messages,
+      events: prompt.events,
+      stderr: prompt.stderr,
+    });
   }
 
   async #failCurrentPrompt(error: Error, terminateChild = true): Promise<void> {

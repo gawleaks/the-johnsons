@@ -31,7 +31,14 @@ vi.mock("node:child_process", async () => {
   };
 });
 
-import { PiRpcAgentProcess, MalformedRpcOutputError, PrematureNonzeroExitError, RpcTimeoutError } from "../../src/rpc/agent-process.js";
+import {
+  AgentProcessClosedError,
+  MalformedRpcOutputError,
+  PiRpcAgentProcess,
+  PrematureExitError,
+  PrematureNonzeroExitError,
+  RpcTimeoutError,
+} from "../../src/rpc/agent-process.js";
 
 const tempDir = async (): Promise<string> => mkdtemp(join(tmpdir(), "johnsons-agent-process-"));
 
@@ -148,10 +155,21 @@ describe("PiRpcAgentProcess", () => {
       await agent.start();
       const prompt = agent.prompt("hello");
       const closing = agent.close();
-      const promptAssertion = expect(prompt).rejects.toBeInstanceOf(PrematureNonzeroExitError);
+      const promptAssertion = expect(prompt).rejects.toBeInstanceOf(AgentProcessClosedError);
 
       await promptAssertion;
       await expect(closing).resolves.toBeUndefined();
+    });
+  });
+
+  it("throws PrematureExitError for a clean exit before settlement", async () => {
+    await withTempDir(async (root) => {
+      process.env.PI_FAKE_RPC_SCENARIO = "clean";
+
+      const agent = createProcess(root);
+      await agent.start();
+
+      await expect(agent.prompt("hello")).rejects.toBeInstanceOf(PrematureExitError);
     });
   });
 
