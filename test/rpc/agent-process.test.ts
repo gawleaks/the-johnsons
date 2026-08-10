@@ -135,7 +135,13 @@ describe("PiRpcAgentProcess", () => {
       const timeoutAssertion = expect(prompt).rejects.toBeInstanceOf(RpcTimeoutError);
 
       await timeoutAssertion;
-      expect(await readFile(join(root, "stdin.log"), "utf8")).toContain('"type":"abort"');
+      const abortRecord = (await readFile(join(root, "stdin.log"), "utf8"))
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .find((record) => record.type === "abort");
+      expect(abortRecord).toMatchObject({ type: "abort" });
+      expect(abortRecord.id).toEqual(expect.any(String));
       expect(await readSignalLog(root)).toBe("");
       expect(isAlive(pid)).toBe(true);
 
