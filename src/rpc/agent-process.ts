@@ -206,7 +206,7 @@ export class PiRpcAgentProcess implements AgentProcess {
   async abort(): Promise<void> {
     if (!this.#child?.stdin) return;
 
-    this.#write({ type: "abort" });
+    this.#write({ id: randomUUID(), type: "abort" });
   }
 
   async close(): Promise<void> {
