@@ -105,6 +105,7 @@ export class PiRpcAgentProcess implements AgentProcess {
   > &
     PiRpcAgentProcessOptions;
   #child: ChildProcessWithoutNullStreams | undefined;
+  #exitPromise: Promise<void> | undefined;
   #stdoutDecoder = new JsonlDecoder();
   #stderrDecoder = new StringDecoder("utf8");
   #stderr = "";
@@ -123,7 +124,7 @@ export class PiRpcAgentProcess implements AgentProcess {
   async start(): Promise<void> {
     if (this.#child) return;
 
-    this.#child = spawn(
+    const child = spawn(
       "pi",
       [
         "--mode",
@@ -138,7 +139,9 @@ export class PiRpcAgentProcess implements AgentProcess {
       { stdio: ["pipe", "pipe", "pipe"] },
     );
 
-    this.#child.stdout.on("data", (chunk: Buffer | string) => {
+    this.#child = child;
+
+    child.stdout.on("data", (chunk: Buffer | string) => {
       try {
         this.#handleStdout(chunk);
       } catch (error) {
@@ -152,7 +155,7 @@ export class PiRpcAgentProcess implements AgentProcess {
       }
     });
 
-    this.#child.stderr.on("data", (chunk: Buffer | string) => {
+    child.stderr.on("data", (chunk: Buffer | string) => {
       const text = this.#stderrDecoder.write(
         typeof chunk === "string" ? Buffer.from(chunk) : chunk,
       );
@@ -164,8 +167,12 @@ export class PiRpcAgentProcess implements AgentProcess {
       }
     });
 
-    this.#child.once("exit", (code: number | null) => {
-      void this.#handleExit(code ?? 0);
+    this.#exitPromise = new Promise<void>((resolve) => {
+      child.once("exit", (code: number | null) => {
+        if (this.#child === child) this.#child = undefined;
+        void this.#handleExit(code ?? 0);
+        resolve();
+      });
     });
   }
 
@@ -212,13 +219,14 @@ export class PiRpcAgentProcess implements AgentProcess {
   async close(): Promise<void> {
     this.#closing = true;
     const child = this.#child;
+    const exited = this.#exitPromise;
 
     if (!child) return;
+    if (!exited) throw new Error("Missing child exit promise");
 
     await this.#failCurrentPrompt(new AgentProcessClosedError(), false);
     child.kill("SIGTERM");
-    await new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    this.#child = undefined;
+    await exited;
   }
 
   #write(payload: Record<string, unknown>): void {

@@ -179,6 +179,23 @@ describe("PiRpcAgentProcess", () => {
     });
   });
 
+  it("does not wait for a second exit event when closing an exited child", async () => {
+    await withTempDir(async (root) => {
+      process.env.PI_FAKE_RPC_SCENARIO = "clean";
+
+      const agent = createProcess(root);
+      await agent.start();
+      await expect(agent.prompt("hello")).rejects.toBeInstanceOf(PrematureExitError);
+
+      await expect(
+        Promise.race([
+          agent.close(),
+          new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 50)),
+        ]),
+      ).resolves.not.toBe("timed-out");
+    });
+  });
+
   it("throws for a premature nonzero exit", async () => {
     await withTempDir(async (root) => {
       process.env.PI_FAKE_RPC_SCENARIO = "nonzero";
