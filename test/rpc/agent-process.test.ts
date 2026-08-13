@@ -57,11 +57,13 @@ const createProcess = (root: string) =>
     sessionDir: join(root, "session"),
     name: "demo-run",
     model: "demo/model",
-    timeoutMs: 50,
+    timeoutMs: 80,
     abortGraceMs: 20,
   });
 
 const signalLog = (root: string): string => join(root, "signal.log");
+const stateLog = (root: string): string => join(root, "state.log");
+const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const readSignalLog = async (root: string): Promise<string> => {
   try {
@@ -89,6 +91,7 @@ describe("PiRpcAgentProcess", () => {
     delete process.env.PI_FAKE_RPC_SCENARIO;
     delete process.env.PI_FAKE_RPC_STDIN_LOG;
     delete process.env.PI_FAKE_RPC_SIGNAL_LOG;
+    delete process.env.PI_FAKE_RPC_STATE;
   });
 
   it("resolves prompt after prompt acceptance and agent_settled", async () => {
@@ -119,6 +122,50 @@ describe("PiRpcAgentProcess", () => {
       await agent.start();
 
       await expect(agent.prompt("hello")).rejects.toBeInstanceOf(MalformedRpcOutputError);
+    });
+  });
+
+  it("restarts with fresh decoder state after a child exits", async () => {
+    await withTempDir(async (root) => {
+      process.env.PI_FAKE_RPC_SCENARIO = "restart-sequence";
+      process.env.PI_FAKE_RPC_STATE = stateLog(root);
+
+      const agent = createProcess(root);
+      await expect(agent.prompt("first")).rejects.toBeInstanceOf(PrematureNonzeroExitError);
+
+      const result = await agent.prompt("second");
+
+      expect(result.events.map((event) => event.type)).toEqual([
+        "agent_start",
+        "response",
+        "agent_end",
+        "agent_settled",
+      ]);
+      expect(result.messages).toEqual([{ role: "assistant", content: "done" }]);
+      expect(result.stderr).toBe("�done");
+    });
+  });
+
+  it("does not SIGTERM a restarted child after timeout grace", async () => {
+    await withTempDir(async (root) => {
+      process.env.PI_FAKE_RPC_SCENARIO = "timeout-sequence";
+      process.env.PI_FAKE_RPC_STATE = stateLog(root);
+      process.env.PI_FAKE_RPC_SIGNAL_LOG = signalLog(root);
+
+      const agent = createProcess(root);
+      await expect(agent.prompt("first")).rejects.toBeInstanceOf(RpcTimeoutError);
+
+      const pid = spawnedChildren[0]?.pid;
+      for (let waited = 0; pid && isAlive(pid) && waited < 20; waited += 2) {
+        await wait(2);
+      }
+
+      expect(isAlive(pid)).toBe(false);
+
+      const result = await agent.prompt("second");
+
+      expect(result.messages).toEqual([{ role: "assistant", content: "done" }]);
+      expect(await readSignalLog(root)).toBe("");
     });
   });
 
@@ -193,6 +240,17 @@ describe("PiRpcAgentProcess", () => {
           new Promise<"timed-out">((resolve) => setTimeout(() => resolve("timed-out"), 50)),
         ]),
       ).resolves.not.toBe("timed-out");
+    });
+  });
+
+  it("throws for a signal exit before settlement", async () => {
+    await withTempDir(async (root) => {
+      process.env.PI_FAKE_RPC_SCENARIO = "signal-exit";
+
+      const agent = createProcess(root);
+      await agent.start();
+
+      await expect(agent.prompt("hello")).rejects.toBeInstanceOf(PrematureNonzeroExitError);
     });
   });
 

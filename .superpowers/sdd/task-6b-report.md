@@ -38,3 +38,15 @@
 - `npm run typecheck` ✅
 - `npm test` ✅
 - `npm run build` ✅
+
+## Final review fix evidence
+- Added RED/GREEN coverage for:
+  - decoder reset across child restart
+  - stale timeout grace not SIGTERMing restarted child
+  - signal exit classified as `PrematureNonzeroExitError`
+- Fixed `src/rpc/agent-process.ts` to recreate per-child decoders, capture grace-kill target, clear grace timer on exit, and classify signal exits as nonzero.
+- Fresh verification:
+  - `npm test -- test/rpc/agent-process.test.ts` ✅
+  - `npm test` ✅
+  - `npm run typecheck` ✅
+  - `npm run build` ✅
