@@ -111,6 +111,8 @@ export class PiRpcAgentProcess implements AgentProcess {
   #stderr = "";
   #requestCounter = 0;
   #currentPrompt: PromptState | undefined;
+  #timeoutGraceTimer: NodeJS.Timeout | undefined;
+  #timeoutGraceChild: ChildProcessWithoutNullStreams | undefined;
   #closing = false;
 
   constructor(options: PiRpcAgentProcessOptions) {
@@ -140,6 +142,8 @@ export class PiRpcAgentProcess implements AgentProcess {
     );
 
     this.#child = child;
+    this.#stdoutDecoder = new JsonlDecoder();
+    this.#stderrDecoder = new StringDecoder("utf8");
 
     child.stdout.on("data", (chunk: Buffer | string) => {
       try {
@@ -168,9 +172,10 @@ export class PiRpcAgentProcess implements AgentProcess {
     });
 
     this.#exitPromise = new Promise<void>((resolve) => {
-      child.once("exit", (code: number | null) => {
+      child.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+        if (this.#timeoutGraceChild === child) this.#clearTimeoutGraceTimer();
         if (this.#child === child) this.#child = undefined;
-        void this.#handleExit(code ?? 0);
+        void this.#handleExit(code, signal);
         resolve();
       });
     });
@@ -224,6 +229,7 @@ export class PiRpcAgentProcess implements AgentProcess {
     if (!child) return;
     if (!exited) throw new Error("Missing child exit promise");
 
+    this.#clearTimeoutGraceTimer();
     await this.#failCurrentPrompt(new AgentProcessClosedError(), false);
     child.kill("SIGTERM");
     await exited;
@@ -275,23 +281,33 @@ export class PiRpcAgentProcess implements AgentProcess {
   async #handleTimeout(prompt: PromptState): Promise<void> {
     if (this.#currentPrompt !== prompt || prompt.settled) return;
 
-    prompt.abortedByTimeout = true;
-    await this.abort();
+    const child = this.#child;
+    if (!child) return;
 
-    setTimeout(() => {
-      this.#child?.kill("SIGTERM");
+    prompt.abortedByTimeout = true;
+    this.#timeoutGraceChild = child;
+    this.#timeoutGraceTimer = setTimeout(() => {
+      if (this.#timeoutGraceChild === child) child.kill("SIGTERM");
     }, this.#options.abortGraceMs);
 
+    await this.abort();
     await this.#failCurrentPrompt(new RpcTimeoutError(), false);
   }
 
-  async #handleExit(code: number): Promise<void> {
+  async #handleExit(
+    code: number | null,
+    signal: NodeJS.Signals | null,
+  ): Promise<void> {
     if (this.#currentPrompt && !this.#currentPrompt.settled) {
       const error = this.#closing
         ? new AgentProcessClosedError()
-        : code === 0
-          ? new PrematureExitError(`Pi RPC exited before settling (${code})`)
-          : new PrematureNonzeroExitError(`Pi RPC exited before settling (${code})`);
+        : signal || code !== 0
+          ? new PrematureNonzeroExitError(
+              `Pi RPC exited before settling (${signal ? `signal ${signal}` : `code ${code ?? 0}`})`,
+            )
+          : new PrematureExitError(
+              `Pi RPC exited before settling (${code ?? 0})`,
+            );
       await this.#failCurrentPrompt(error, false);
     }
   }
@@ -301,6 +317,7 @@ export class PiRpcAgentProcess implements AgentProcess {
     if (!prompt || !prompt.accepted || !prompt.settled) return;
 
     if (prompt.timer) clearTimeout(prompt.timer);
+    this.#clearTimeoutGraceTimer();
     this.#currentPrompt = undefined;
     prompt.resolve({
       messages: prompt.messages,
@@ -320,5 +337,11 @@ export class PiRpcAgentProcess implements AgentProcess {
     if (terminateChild && !this.#closing) {
       this.#child?.kill("SIGTERM");
     }
+  }
+
+  #clearTimeoutGraceTimer(): void {
+    if (this.#timeoutGraceTimer) clearTimeout(this.#timeoutGraceTimer);
+    this.#timeoutGraceTimer = undefined;
+    this.#timeoutGraceChild = undefined;
   }
 }
