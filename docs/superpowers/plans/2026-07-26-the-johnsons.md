@@ -555,7 +555,7 @@ export class RunController {
 }
 ```
 
-Before every agent dispatch, persist a `dispatching` transition record. After an agent settles, validate its structured artifact, persist it, then persist the workflow transition. Route architect approval through the UI; route all role questions through `Terminal.askQuestion` and persist question/answer pairs. Any developer plan deviation moves directly to `escalated` without invoking reviewer.
+Before every agent dispatch, persist a `dispatching` transition record. After an agent settles, validate its structured artifact, persist it, then persist the workflow transition. The planner artifact contains ordered full chunk definitions—not IDs alone—with `id`, `scope`, `nonGoals`, `prerequisites`, `touchedAreas`, stable-ID `acceptanceCriteria`, `requiredChecks`, `handoffArtifacts`, and `recoveryNotes`; write each validated definition to `chunks/<id>/definition.md`. Route architect approval through the UI; route all role questions through `Terminal.askQuestion` and persist question/answer pairs. Any developer plan deviation moves directly to `escalated` without invoking reviewer.
 
 - [ ] **Step 4: Implement the terminal CLI contract**
 
