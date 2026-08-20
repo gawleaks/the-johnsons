@@ -27,11 +27,17 @@ const createController = async (
   workspace: string,
   response: string,
   approved: boolean,
+  onApproveSpecification?: (specification: string) => void,
 ) => {
   const runId = "run-1";
   const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
   const agent = createFakeAgent({ architect: [response] });
-  const ui = { approveSpecification: async () => approved };
+  const ui = {
+    approveSpecification: async (specification: string) => {
+      onApproveSpecification?.(specification);
+      return approved;
+    },
+  };
 
   return {
     agent,
@@ -48,16 +54,21 @@ const createController = async (
 describe("RunController slice 1", () => {
   it("writes the architect specification and reaches planning after approval", async () => {
     await withTempDir(async (workspace) => {
+      let approvedSpecification = "";
       const { agent, controller, store } = await createController(
         workspace,
         JSON.stringify({ specification: "# Spec\n" }),
         true,
+        (specification) => {
+          approvedSpecification = specification;
+        },
       );
 
       await controller.start();
 
       await expect(store.loadState()).resolves.toMatchObject({ phase: "planning", transitionId: 2 });
       await expect(readFile(specPath(workspace, "run-1"), "utf8")).resolves.toBe("# Spec\n");
+      expect(approvedSpecification).toBe("# Spec\n");
       expect(agent.calls).toEqual([{ role: "architect", handoff: expect.any(String) }]);
     });
   });

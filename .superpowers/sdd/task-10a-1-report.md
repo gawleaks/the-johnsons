@@ -22,8 +22,16 @@ Tests       5 passed (5)
 
 ## Verification
 - `npm test -- test/orchestrator/run-controller.test.ts`
+  - passed: 1 file, 5 tests
+- controller reran `npm test`
+  - passed: 18 files, 116 tests
 - `npm run typecheck`
+  - passed
 - `npm run build`
+  - passed
 
-## Concern
-- `npm test` still has one failing pre-existing test in `test/rpc/agent-process.test.ts` (`aborts on timeout before terminating the child`).
+## Evidence
+```text
+Test Files  18 passed (18)
+Tests       116 passed (116)
+```
