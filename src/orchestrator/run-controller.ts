@@ -1,7 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { applyTransition } from "../domain/workflow.js";
-import type { ChunkState, Role, RunState } from "../domain/types.js";
+import type {
+  AcceptanceCriterion,
+  ChunkDefinition,
+  ChunkState,
+  Role,
+  RunState,
+} from "../domain/types.js";
 import type { Policy } from "../policy/config.js";
 import { buildRoleHandoff } from "../policy/prompts.js";
 import type { ArtifactStore } from "../storage/artifact-store.js";
@@ -41,13 +47,98 @@ const parseSpecification = (output: string): string => {
   return specification;
 };
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.trim() !== "";
+
 const isValidChunkId = (id: string): boolean =>
   id !== "" && id !== "." && id !== ".." && !id.includes("/") && !id.includes("\\");
 
-const parsePlan = (output: string): ReadonlyArray<ChunkState> => {
+const parseStringList = (value: unknown): ReadonlyArray<string> => {
+  if (!Array.isArray(value) || value.some((entry) => !isNonEmptyString(entry))) {
+    throw new Error("Invalid planner output");
+  }
+
+  return value;
+};
+
+const parseAcceptanceCriteria = (value: unknown): ReadonlyArray<AcceptanceCriterion> => {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error("Invalid planner output");
+  }
+
+  return value.map((criterion) => {
+    if (!isRecord(criterion)) {
+      throw new Error("Invalid planner output");
+    }
+
+    const keys = Object.keys(criterion);
+    if (keys.length !== 2 || !keys.includes("id") || !keys.includes("text")) {
+      throw new Error("Invalid planner output");
+    }
+
+    if (!isNonEmptyString(criterion.id) || !isNonEmptyString(criterion.text)) {
+      throw new Error("Invalid planner output");
+    }
+
+    return { id: criterion.id, text: criterion.text };
+  });
+};
+
+const parseChunkDefinition = (value: unknown): ChunkDefinition => {
+  if (!isRecord(value)) {
+    throw new Error("Invalid planner output");
+  }
+
+  const keys = Object.keys(value);
+  const requiredKeys = [
+    "id",
+    "scope",
+    "nonGoals",
+    "prerequisites",
+    "touchedAreas",
+    "acceptanceCriteria",
+    "requiredChecks",
+    "handoffArtifacts",
+    "recoveryNotes",
+  ];
+
+  if (keys.length !== requiredKeys.length || requiredKeys.some((key) => !keys.includes(key))) {
+    throw new Error("Invalid planner output");
+  }
+
+  if (!isNonEmptyString(value.id) || !isValidChunkId(value.id) || !isNonEmptyString(value.scope)) {
+    throw new Error("Invalid planner output");
+  }
+
+  return {
+    id: value.id,
+    scope: value.scope,
+    nonGoals: parseStringList(value.nonGoals),
+    prerequisites: parseStringList(value.prerequisites),
+    touchedAreas: parseStringList(value.touchedAreas),
+    acceptanceCriteria: parseAcceptanceCriteria(value.acceptanceCriteria),
+    requiredChecks: parseStringList(value.requiredChecks),
+    handoffArtifacts: parseStringList(value.handoffArtifacts),
+    recoveryNotes: parseStringList(value.recoveryNotes),
+  };
+};
+
+const normalizeChunkState = ({ id }: ChunkDefinition): ChunkState => ({
+  id,
+  status: "pending",
+  reviewAttempts: 0,
+});
+
+const parsePlan = (output: string): {
+  readonly definitions: ReadonlyArray<ChunkDefinition>;
+  readonly chunks: ReadonlyArray<ChunkState>;
+} => {
   const parsed: unknown = JSON.parse(output);
 
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+  if (!isRecord(parsed)) {
     throw new Error("Invalid planner output");
   }
 
@@ -56,34 +147,20 @@ const parsePlan = (output: string): ReadonlyArray<ChunkState> => {
     throw new Error("Invalid planner output");
   }
 
-  const chunks = (parsed as { chunks?: unknown }).chunks;
-  if (!Array.isArray(chunks) || chunks.length === 0) {
+  const planChunks = parsed.chunks;
+  if (!Array.isArray(planChunks) || planChunks.length === 0) {
     throw new Error("Invalid planner output");
   }
 
-  const normalized = chunks.map((chunk) => {
-    if (!chunk || typeof chunk !== "object" || Array.isArray(chunk)) {
-      throw new Error("Invalid planner output");
-    }
-
-    const chunkKeys = Object.keys(chunk);
-    if (chunkKeys.length !== 1 || chunkKeys[0] !== "id") {
-      throw new Error("Invalid planner output");
-    }
-
-    const id = (chunk as { id?: unknown }).id;
-    if (typeof id !== "string" || !isValidChunkId(id)) {
-      throw new Error("Invalid planner output");
-    }
-
-    return { id, status: "pending", reviewAttempts: 0 } as const;
-  });
-
-  if (new Set(normalized.map(({ id }) => id)).size !== normalized.length) {
+  const definitions = planChunks.map(parseChunkDefinition);
+  if (new Set(definitions.map(({ id }) => id)).size !== definitions.length) {
     throw new Error("Invalid planner output");
   }
 
-  return normalized;
+  return {
+    definitions,
+    chunks: definitions.map(normalizeChunkState),
+  };
 };
 
 const runRoot = (state: RunState): string => join(state.workspace, ".johnsons", "runs", state.runId);
@@ -145,12 +222,15 @@ export class RunController {
       "planner",
       buildRoleHandoff("planner", { specification: await readFile(runArtifactPath(state, "specification.md"), "utf8") }),
     );
-    const chunks = parsePlan(plannerOutput);
+    const { definitions, chunks } = parsePlan(plannerOutput);
 
     await this.deps.artifactStore.writeText("plan.md", plannerOutput);
     await Promise.all(
-      chunks.map(async (chunk) =>
-        this.deps.artifactStore.writeText(chunkDefinitionPath(chunk.id), JSON.stringify({ id: chunk.id })),
+      definitions.map(async (definition) =>
+        this.deps.artifactStore.writeText(
+          chunkDefinitionPath(definition.id),
+          JSON.stringify(definition),
+        ),
       ),
     );
 

@@ -37,3 +37,20 @@ Tests       13 passed (13)
 ## Notes
 - Planner receives the exact stored specification handoff.
 - Invalid, empty, duplicate, extra-field, and non-object chunk plans now fail before transitions or plan artifacts.
+
+## 2026-08-20 approved contract update
+- Replaced the slice 2 planner tests with the full chunk-definition contract: `id`, `scope`, `nonGoals`, `prerequisites`, `touchedAreas`, `acceptanceCriteria`, `requiredChecks`, `handoffArtifacts`, `recoveryNotes`.
+- `plan.md` now stays as the full planner JSON and each `chunks/<id>/definition.md` stores the full validated chunk definition.
+- Runtime normalization stays limited to workflow `ChunkState` fields: `id`, `status`, `reviewAttempts`.
+
+### Evidence
+- RED: `npm test -- test/orchestrator/run-controller.test.ts`
+  - failed first with `2 failed`
+- GREEN: `npm test -- test/orchestrator/run-controller.test.ts`
+  - passed: `38 passed`
+- Full: `npm test`
+  - passed: `9 passed`, `91 passed`
+- Typecheck: `npm run typecheck`
+  - passed
+- Build: `npm run build`
+  - passed
