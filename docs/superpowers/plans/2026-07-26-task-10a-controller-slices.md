@@ -21,7 +21,7 @@
 - Modify: `src/orchestrator/run-controller.ts`
 - Modify: `test/orchestrator/run-controller.test.ts`
 
-**Behavior:** From `planning`, dispatch planner with specification handoff. Parse `{ "chunks": [{ "id": string }] }`, reject empty/duplicate IDs, normalize pending chunks, write `plan.md` and `chunks/<id>/definition.md`, then persist `plan-created`. Enter `developing` with the first chunk active.
+**Behavior:** From `planning`, dispatch planner with specification handoff. Parse a full ordered plan: `{ "chunks": [{ "id", "scope", "nonGoals", "prerequisites", "touchedAreas", "acceptanceCriteria", "requiredChecks", "handoffArtifacts", "recoveryNotes" }] }`. Reject empty/duplicate/unsafe IDs and incomplete chunk definitions. Normalize only runtime fields (`status: "pending"`, `reviewAttempts: 0`), write the full planner output to `plan.md`, write each full chunk definition to `chunks/<id>/definition.md`, then persist `plan-created`. Enter `developing` with the first chunk active.
 
 **Check:** tests prove plan/chunk artifacts, invalid plans rejected before transitions, and ordered first-chunk activation.
 
