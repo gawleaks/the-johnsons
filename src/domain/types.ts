@@ -12,6 +12,23 @@ export type RunPhase =
 
 export type ReviewVerdict = "approved" | "rejected" | "escalate";
 
+export interface AcceptanceCriterion {
+  readonly id: string;
+  readonly text: string;
+}
+
+export interface ChunkDefinition {
+  readonly id: string;
+  readonly scope: string;
+  readonly nonGoals: ReadonlyArray<string>;
+  readonly prerequisites: ReadonlyArray<string>;
+  readonly touchedAreas: ReadonlyArray<string>;
+  readonly acceptanceCriteria: ReadonlyArray<AcceptanceCriterion>;
+  readonly requiredChecks: ReadonlyArray<string>;
+  readonly handoffArtifacts: ReadonlyArray<string>;
+  readonly recoveryNotes: ReadonlyArray<string>;
+}
+
 export interface ChunkState {
   readonly id: string;
   readonly status:

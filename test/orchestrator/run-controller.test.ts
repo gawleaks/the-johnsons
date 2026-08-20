@@ -35,6 +35,21 @@ const planningState = (runId: string, workspace: string) => ({
   transitionId: 2,
 });
 
+const chunkDefinition = (id: string, overrides: Record<string, unknown> = {}) => ({
+  id,
+  scope: `Implement ${id}`,
+  nonGoals: ["skip extras"],
+  prerequisites: ["approved spec"],
+  touchedAreas: ["src/orchestrator/run-controller.ts"],
+  acceptanceCriteria: [{ id: "AC-1", text: "planner preserves full definition" }],
+  requiredChecks: ["npm test -- test/orchestrator/run-controller.test.ts"],
+  handoffArtifacts: ["chunks/run-controller/definition.md"],
+  recoveryNotes: ["re-run focused tests before retry"],
+  ...overrides,
+});
+
+const planResponse = (...chunks: ReadonlyArray<Record<string, unknown>>) => JSON.stringify({ chunks });
+
 const createController = async (
   workspace: string,
   response: string,
@@ -159,10 +174,15 @@ describe("RunController slice 1", () => {
 });
 
 describe("RunController slice 2", () => {
-  it("writes the plan and chunk definitions, then activates the first chunk", async () => {
+  it("writes the full plan and full chunk definitions, then activates the first chunk", async () => {
     await withTempDir(async (workspace) => {
       const specification = "# Spec\n";
-      const plannerResponse = JSON.stringify({ chunks: [{ id: "chunk-a" }, { id: "chunk-b" }] });
+      const plannerResponse = planResponse(
+        chunkDefinition("chunk-a"),
+        chunkDefinition("chunk-b", {
+          acceptanceCriteria: [{ id: "AC-2", text: "second chunk keeps its own criteria" }],
+        }),
+      );
       const { agent, controller, store } = await createPlanningController(
         workspace,
         specification,
@@ -182,10 +202,14 @@ describe("RunController slice 2", () => {
       });
       await expect(readFile(planPath(workspace, "run-1"), "utf8")).resolves.toBe(plannerResponse);
       await expect(readFile(chunkDefinitionPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe(
-        JSON.stringify({ id: "chunk-a" }),
+        JSON.stringify(chunkDefinition("chunk-a")),
       );
       await expect(readFile(chunkDefinitionPath(workspace, "run-1", "chunk-b"), "utf8")).resolves.toBe(
-        JSON.stringify({ id: "chunk-b" }),
+        JSON.stringify(
+          chunkDefinition("chunk-b", {
+            acceptanceCriteria: [{ id: "AC-2", text: "second chunk keeps its own criteria" }],
+          }),
+        ),
       );
       expect(agent.calls).toEqual([{ role: "planner", handoff: specification }]);
     });
@@ -194,11 +218,35 @@ describe("RunController slice 2", () => {
   it.each([
     ["malformed JSON", "not json"],
     ["empty chunks", JSON.stringify({ chunks: [] })],
-    ["empty chunk id", JSON.stringify({ chunks: [{ id: "" }] })],
-    ["duplicate chunk ids", JSON.stringify({ chunks: [{ id: "chunk-a" }, { id: "chunk-a" }] })],
-    ["extra chunk fields", JSON.stringify({ chunks: [{ id: "chunk-a", extra: true }] })],
     ["non-object chunk entry", JSON.stringify({ chunks: ["chunk-a"] })],
-    ["path-escaping chunk ids", JSON.stringify({ chunks: [{ id: "../evil" }, { id: "a/b" }, { id: "a\\b" }, { id: "." }, { id: ".." }] })],
+    ["duplicate chunk ids", planResponse(chunkDefinition("chunk-a"), chunkDefinition("chunk-a"))],
+    ["path-escaping chunk ids", planResponse(chunkDefinition("../evil"))],
+    ["slash chunk ids", planResponse(chunkDefinition("a/b"))],
+    ["backslash chunk ids", planResponse(chunkDefinition("a\\b"))],
+    ["dot chunk ids", planResponse(chunkDefinition("."))],
+    ["dotdot chunk ids", planResponse(chunkDefinition(".."))],
+    ["empty chunk id", planResponse(chunkDefinition(""))],
+    ["missing scope", planResponse(chunkDefinition("chunk-a", { scope: undefined }))],
+    ["empty scope", planResponse(chunkDefinition("chunk-a", { scope: "" }))],
+    ["missing nonGoals", planResponse(chunkDefinition("chunk-a", { nonGoals: undefined }))],
+    ["empty nonGoals entry", planResponse(chunkDefinition("chunk-a", { nonGoals: [""] }))],
+    ["missing prerequisites", planResponse(chunkDefinition("chunk-a", { prerequisites: undefined }))],
+    ["empty prerequisites entry", planResponse(chunkDefinition("chunk-a", { prerequisites: [""] }))],
+    ["missing touchedAreas", planResponse(chunkDefinition("chunk-a", { touchedAreas: undefined }))],
+    ["empty touchedAreas entry", planResponse(chunkDefinition("chunk-a", { touchedAreas: [""] }))],
+    ["missing acceptanceCriteria", planResponse(chunkDefinition("chunk-a", { acceptanceCriteria: undefined }))],
+    ["empty acceptanceCriteria", planResponse(chunkDefinition("chunk-a", { acceptanceCriteria: [] }))],
+    ["missing acceptanceCriteria id", planResponse(chunkDefinition("chunk-a", { acceptanceCriteria: [{ text: "x" }] }))],
+    ["empty acceptanceCriteria id", planResponse(chunkDefinition("chunk-a", { acceptanceCriteria: [{ id: "", text: "x" }] }))],
+    ["missing acceptanceCriteria text", planResponse(chunkDefinition("chunk-a", { acceptanceCriteria: [{ id: "AC-1" }] }))],
+    ["empty acceptanceCriteria text", planResponse(chunkDefinition("chunk-a", { acceptanceCriteria: [{ id: "AC-1", text: "" }] }))],
+    ["missing requiredChecks", planResponse(chunkDefinition("chunk-a", { requiredChecks: undefined }))],
+    ["empty requiredChecks entry", planResponse(chunkDefinition("chunk-a", { requiredChecks: [""] }))],
+    ["missing handoffArtifacts", planResponse(chunkDefinition("chunk-a", { handoffArtifacts: undefined }))],
+    ["empty handoffArtifacts entry", planResponse(chunkDefinition("chunk-a", { handoffArtifacts: [""] }))],
+    ["missing recoveryNotes", planResponse(chunkDefinition("chunk-a", { recoveryNotes: undefined }))],
+    ["empty recoveryNotes entry", planResponse(chunkDefinition("chunk-a", { recoveryNotes: [""] }))],
+    ["extra chunk fields", planResponse(chunkDefinition("chunk-a", { extra: true }))],
   ])("rejects %s before plan artifacts or transitions", async (_label, plannerResponse) => {
     await withTempDir(async (workspace) => {
       const { agent, controller, store } = await createPlanningController(
@@ -218,7 +266,7 @@ describe("RunController slice 2", () => {
   it("sends the exact specification handoff to the planner", async () => {
     await withTempDir(async (workspace) => {
       const specification = "# Spec\n\n- one\n";
-      const plannerResponse = JSON.stringify({ chunks: [{ id: "chunk-a" }] });
+      const plannerResponse = planResponse(chunkDefinition("chunk-a"));
       const { agent, controller } = await createPlanningController(workspace, specification, plannerResponse);
 
       await controller.start();
