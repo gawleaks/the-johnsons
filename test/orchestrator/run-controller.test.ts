@@ -198,6 +198,7 @@ describe("RunController slice 2", () => {
     ["duplicate chunk ids", JSON.stringify({ chunks: [{ id: "chunk-a" }, { id: "chunk-a" }] })],
     ["extra chunk fields", JSON.stringify({ chunks: [{ id: "chunk-a", extra: true }] })],
     ["non-object chunk entry", JSON.stringify({ chunks: ["chunk-a"] })],
+    ["path-escaping chunk ids", JSON.stringify({ chunks: [{ id: "../evil" }, { id: "a/b" }, { id: "a\\b" }, { id: "." }, { id: ".." }] })],
   ])("rejects %s before plan artifacts or transitions", async (_label, plannerResponse) => {
     await withTempDir(async (workspace) => {
       const { agent, controller, store } = await createPlanningController(
