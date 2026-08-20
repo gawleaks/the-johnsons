@@ -41,6 +41,9 @@ const parseSpecification = (output: string): string => {
   return specification;
 };
 
+const isValidChunkId = (id: string): boolean =>
+  id !== "" && id !== "." && id !== ".." && !id.includes("/") && !id.includes("\\");
+
 const parsePlan = (output: string): ReadonlyArray<ChunkState> => {
   const parsed: unknown = JSON.parse(output);
 
@@ -69,7 +72,7 @@ const parsePlan = (output: string): ReadonlyArray<ChunkState> => {
     }
 
     const id = (chunk as { id?: unknown }).id;
-    if (typeof id !== "string" || id.trim() === "") {
+    if (typeof id !== "string" || !isValidChunkId(id)) {
       throw new Error("Invalid planner output");
     }
 
