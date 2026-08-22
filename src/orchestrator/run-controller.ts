@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { applyTransition } from "../domain/workflow.js";
 import type {
@@ -19,6 +19,8 @@ export interface RoleAgent {
 
 export interface RunUi {
   approveSpecification(specification: string): Promise<boolean>;
+  askQuestion(role: Role, question: string): Promise<string>;
+  resolveEscalation(): Promise<boolean>;
 }
 
 export interface RunControllerDeps {
@@ -169,6 +171,8 @@ const runArtifactPath = (state: RunState, name: string): string => join(runRoot(
 const chunkDefinitionPath = (id: string): string => join("chunks", id, "definition.md");
 const implementationReportPath = (id: string): string => join("chunks", id, "implementation-report.md");
 const reviewArtifactPath = (id: string, attempt: number): string => join("chunks", id, `review-${attempt}.md`);
+const questionsPath = "questions";
+const questionArtifactPath = (index: number): string => join(questionsPath, `${index.toString().padStart(4, "0")}.json`);
 
 const activeChunkId = (state: RunState): string => {
   if (!state.activeChunkId) {
@@ -230,6 +234,24 @@ const parseReviewerOutput = (output: string): { readonly verdict: ReviewVerdict;
   return { verdict: parsed.verdict as ReviewVerdict, report: parsed.report };
 };
 
+const listQuestionIndexes = async (state: RunState): Promise<ReadonlyArray<number>> => {
+  try {
+    const entries = await readdir(runArtifactPath(state, questionsPath), { withFileTypes: true });
+
+    return entries
+      .filter((entry) => entry.isFile())
+      .map(({ name }) => name.match(/^(\d+)\.json$/)?.[1])
+      .filter((index): index is string => index !== undefined)
+      .map((index) => Number.parseInt(index, 10));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+};
+
 export class RunController {
   constructor(private readonly deps: RunControllerDeps) {}
 
@@ -284,6 +306,34 @@ export class RunController {
     return state;
   }
 
+  async resume(): Promise<RunState> {
+    const state = await this.deps.artifactStore.loadState();
+
+    if (state.phase === "planning") {
+      return this.startPlanning(state);
+    }
+
+    if (state.phase === "developing" || state.phase === "reviewing") {
+      return this.runExecutionLoop(state);
+    }
+
+    if (state.phase === "escalated") {
+      return this.resolveEscalation(state);
+    }
+
+    return state;
+  }
+
+  async answerUserQuestion(role: Role, question: string): Promise<string> {
+    const answer = await this.deps.ui.askQuestion(role, question);
+    const state = await this.deps.artifactStore.loadState();
+    const nextIndex = Math.max(0, ...await listQuestionIndexes(state)) + 1;
+
+    await this.deps.artifactStore.writeJson(questionArtifactPath(nextIndex), { role, question, answer });
+
+    return answer;
+  }
+
   private async startPlanning(state: RunState): Promise<RunState> {
     const plannerOutput = await this.deps.roleAgent.prompt(
       "planner",
@@ -336,6 +386,14 @@ export class RunController {
     await this.deps.artifactStore.appendTransition({ type: "developer-finished", deviated }, next);
 
     return next;
+  }
+
+  private async resolveEscalation(state: RunState): Promise<RunState> {
+    const resume = await this.deps.ui.resolveEscalation();
+    const next = applyTransition(state, { type: "user-escalated-resolution", resume }, this.deps.policy);
+    await this.deps.artifactStore.appendTransition({ type: "user-escalated-resolution", resume }, next);
+
+    return resume ? this.runExecutionLoop(next) : next;
   }
 
   private async finishReview(state: RunState): Promise<RunState> {

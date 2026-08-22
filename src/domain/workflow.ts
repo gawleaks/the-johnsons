@@ -163,7 +163,7 @@ export function applyTransition(
 
   if (transition.type === "user-escalated-resolution" && state.phase === "escalated") {
     if (!transition.resume) {
-      return nextState(state, { phase: "failed" });
+      return nextState(state, { phase: "failed", activeChunkId: undefined });
     }
 
     const activeChunk = findActiveChunk(state);
