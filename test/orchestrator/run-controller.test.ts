@@ -25,6 +25,10 @@ const specPath = (workspace: string, runId: string): string => join(runRoot(work
 const planPath = (workspace: string, runId: string): string => join(runRoot(workspace, runId), "plan.md");
 const chunkDefinitionPath = (workspace: string, runId: string, chunkId: string): string =>
   join(runRoot(workspace, runId), "chunks", chunkId, "definition.md");
+const implementationReportPath = (workspace: string, runId: string, chunkId: string): string =>
+  join(runRoot(workspace, runId), "chunks", chunkId, "implementation-report.md");
+const reviewPath = (workspace: string, runId: string, chunkId: string, attempt: number): string =>
+  join(runRoot(workspace, runId), "chunks", chunkId, `review-${attempt}.md`);
 
 const planningState = (runId: string, workspace: string) => ({
   version: 1 as const,
@@ -33,6 +37,21 @@ const planningState = (runId: string, workspace: string) => ({
   phase: "planning" as const,
   chunks: [],
   transitionId: 2,
+});
+
+const executionState = (
+  runId: string,
+  workspace: string,
+  phase: "developing" | "reviewing",
+  reviewAttempts = 0,
+) => ({
+  version: 1 as const,
+  runId,
+  workspace,
+  phase,
+  chunks: [{ id: "chunk-a", status: phase, reviewAttempts }],
+  activeChunkId: "chunk-a",
+  transitionId: phase === "developing" ? 3 : 4,
 });
 
 const chunkDefinition = (id: string, overrides: Record<string, unknown> = {}) => ({
@@ -88,6 +107,34 @@ const createPlanningController = async (
   await store.writeText("specification.md", specification);
   await store.writeJson("state.json", planningState(runId, workspace));
   const agent = createFakeAgent({ planner: [plannerResponse] });
+  const controller = new RunController({
+    artifactStore: store,
+    policy: defaultPolicy,
+    roleAgent: agent,
+    ui: { approveSpecification: async () => true },
+  });
+
+  return { agent, controller, store };
+};
+
+const createExecutionController = async (
+  workspace: string,
+  state: ReturnType<typeof executionState>,
+  responses: Partial<Record<"developer" | "reviewer", ReadonlyArray<string>>>,
+  implementationReport?: string,
+) => {
+  const runId = "run-1";
+  const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+  await Promise.all([
+    store.writeText("specification.md", "# Spec\n"),
+    store.writeText("plan.md", planResponse(chunkDefinition("chunk-a"))),
+    store.writeText("chunks/chunk-a/definition.md", JSON.stringify(chunkDefinition("chunk-a"))),
+    store.writeJson("state.json", state),
+    ...(implementationReport === undefined
+      ? []
+      : [store.writeText(`chunks/chunk-a/implementation-report.md`, implementationReport)]),
+  ]);
+  const agent = createFakeAgent(responses);
   const controller = new RunController({
     artifactStore: store,
     policy: defaultPolicy,
@@ -272,6 +319,155 @@ describe("RunController slice 2", () => {
       await controller.start();
 
       expect(agent.calls).toEqual([{ role: "planner", handoff: specification }]);
+    });
+  });
+});
+
+describe("RunController slice 3", () => {
+  it("completes an approved single chunk and persists implementation and review reports", async () => {
+    await withTempDir(async (workspace) => {
+      const { agent, controller, store } = await createExecutionController(
+        workspace,
+        executionState("run-1", workspace, "developing"),
+        {
+          developer: [JSON.stringify({ report: "implemented", deviated: false })],
+          reviewer: [JSON.stringify({ verdict: "approved", report: "looks good" })],
+        },
+      );
+
+      await controller.start();
+
+      await expect(store.loadState()).resolves.toMatchObject({
+        phase: "completed",
+        transitionId: 5,
+        chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 0 }],
+      });
+      await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe("implemented");
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe("looks good");
+      expect(agent.calls).toEqual([
+        {
+          role: "developer",
+          handoff: ["# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a"))].join("\n\n---\n\n"),
+        },
+        {
+          role: "reviewer",
+          handoff: ["# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a")), "implemented"].join("\n\n---\n\n"),
+        },
+      ]);
+    });
+  });
+
+  it("retries the same chunk after rejection and increments the review attempt", async () => {
+    await withTempDir(async (workspace) => {
+      const { agent, controller, store } = await createExecutionController(
+        workspace,
+        executionState("run-1", workspace, "developing"),
+        {
+          developer: [
+            JSON.stringify({ report: "implemented once", deviated: false }),
+            JSON.stringify({ report: "implemented twice", deviated: false }),
+          ],
+          reviewer: [
+            JSON.stringify({ verdict: "rejected", report: "try again" }),
+            JSON.stringify({ verdict: "approved", report: "now good" }),
+          ],
+        },
+      );
+
+      await controller.start();
+
+      await expect(store.loadState()).resolves.toMatchObject({
+        phase: "completed",
+        transitionId: 7,
+        chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 1 }],
+      });
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe("try again");
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe("now good");
+      await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe("implemented twice");
+      expect(agent.calls.map(({ role }) => role)).toEqual(["developer", "reviewer", "developer", "reviewer"]);
+    });
+  });
+
+  it("escalates when rejection reaches the retry limit", async () => {
+    await withTempDir(async (workspace) => {
+      const { agent, controller, store } = await createExecutionController(
+        workspace,
+        executionState("run-1", workspace, "developing", 1),
+        {
+          developer: [JSON.stringify({ report: "implemented", deviated: false })],
+          reviewer: [JSON.stringify({ verdict: "rejected", report: "still broken" })],
+        },
+      );
+
+      await controller.start();
+
+      await expect(store.loadState()).resolves.toMatchObject({
+        phase: "escalated",
+        activeChunkId: "chunk-a",
+        transitionId: 5,
+        chunks: [{ id: "chunk-a", status: "escalated", reviewAttempts: 2 }],
+      });
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe("still broken");
+      expect(agent.calls.map(({ role }) => role)).toEqual(["developer", "reviewer"]);
+    });
+  });
+
+  it("escalates developer deviation without calling reviewer", async () => {
+    await withTempDir(async (workspace) => {
+      const { agent, controller, store } = await createExecutionController(
+        workspace,
+        executionState("run-1", workspace, "developing"),
+        { developer: [JSON.stringify({ report: "need help", deviated: true })] },
+      );
+
+      await controller.start();
+
+      await expect(store.loadState()).resolves.toMatchObject({
+        phase: "escalated",
+        activeChunkId: "chunk-a",
+        transitionId: 4,
+        chunks: [{ id: "chunk-a", status: "escalated", reviewAttempts: 0 }],
+      });
+      await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe("need help");
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).rejects.toThrow();
+      expect(agent.calls.map(({ role }) => role)).toEqual(["developer"]);
+    });
+  });
+
+  it.each([
+    ["not json", "Invalid developer output"],
+    [JSON.stringify({ report: "", deviated: false }), "Invalid developer output"],
+  ])("rejects malformed developer responses without artifacts or transitions", async (response) => {
+    await withTempDir(async (workspace) => {
+      const initialState = executionState("run-1", workspace, "developing");
+      const { controller, store } = await createExecutionController(
+        workspace,
+        initialState,
+        { developer: [response] },
+      );
+
+      await expect(controller.start()).rejects.toThrow("Invalid developer output");
+      await expect(store.loadState()).resolves.toEqual(initialState);
+      await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).rejects.toThrow();
+    });
+  });
+
+  it.each([
+    ["not json", "Invalid reviewer output"],
+    [JSON.stringify({ verdict: "approved", report: "" }), "Invalid reviewer output"],
+  ])("rejects malformed reviewer responses without artifacts or transitions", async (response) => {
+    await withTempDir(async (workspace) => {
+      const initialState = executionState("run-1", workspace, "reviewing");
+      const { controller, store } = await createExecutionController(
+        workspace,
+        initialState,
+        { reviewer: [response] },
+        "implemented",
+      );
+
+      await expect(controller.start()).rejects.toThrow("Invalid reviewer output");
+      await expect(store.loadState()).resolves.toEqual(initialState);
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).rejects.toThrow();
     });
   });
 });

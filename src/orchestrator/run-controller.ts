@@ -5,6 +5,7 @@ import type {
   AcceptanceCriterion,
   ChunkDefinition,
   ChunkState,
+  ReviewVerdict,
   Role,
   RunState,
 } from "../domain/types.js";
@@ -166,6 +167,68 @@ const parsePlan = (output: string): {
 const runRoot = (state: RunState): string => join(state.workspace, ".johnsons", "runs", state.runId);
 const runArtifactPath = (state: RunState, name: string): string => join(runRoot(state), name);
 const chunkDefinitionPath = (id: string): string => join("chunks", id, "definition.md");
+const implementationReportPath = (id: string): string => join("chunks", id, "implementation-report.md");
+const reviewArtifactPath = (id: string, attempt: number): string => join("chunks", id, `review-${attempt}.md`);
+
+const activeChunkId = (state: RunState): string => {
+  if (!state.activeChunkId) {
+    throw new Error(`Missing active chunk for ${state.phase}`);
+  }
+
+  return state.activeChunkId;
+};
+
+const parseDeveloperOutput = (output: string): { readonly report: string; readonly deviated: boolean } => {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error("Invalid developer output");
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error("Invalid developer output");
+  }
+
+  const keys = Object.keys(parsed);
+  if (keys.length !== 2 || !keys.includes("report") || !keys.includes("deviated")) {
+    throw new Error("Invalid developer output");
+  }
+
+  if (!isNonEmptyString(parsed.report) || typeof parsed.deviated !== "boolean") {
+    throw new Error("Invalid developer output");
+  }
+
+  return { report: parsed.report, deviated: parsed.deviated };
+};
+
+const validReviewerVerdicts = new Set<ReviewVerdict>(["approved", "rejected", "escalate"]);
+
+const parseReviewerOutput = (output: string): { readonly verdict: ReviewVerdict; readonly report: string } => {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error("Invalid reviewer output");
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error("Invalid reviewer output");
+  }
+
+  const keys = Object.keys(parsed);
+  if (keys.length !== 2 || !keys.includes("verdict") || !keys.includes("report")) {
+    throw new Error("Invalid reviewer output");
+  }
+
+  if (!validReviewerVerdicts.has(parsed.verdict as ReviewVerdict) || !isNonEmptyString(parsed.report)) {
+    throw new Error("Invalid reviewer output");
+  }
+
+  return { verdict: parsed.verdict as ReviewVerdict, report: parsed.report };
+};
 
 export class RunController {
   constructor(private readonly deps: RunControllerDeps) {}
@@ -214,6 +277,10 @@ export class RunController {
       return this.startPlanning(state);
     }
 
+    if (state.phase === "developing" || state.phase === "reviewing") {
+      return this.runExecutionLoop(state);
+    }
+
     return state;
   }
 
@@ -236,6 +303,62 @@ export class RunController {
 
     const next = applyTransition(state, { type: "plan-created", chunks }, this.deps.policy);
     await this.deps.artifactStore.appendTransition({ type: "plan-created", chunks }, next);
+
+    return next;
+  }
+
+  private async runExecutionLoop(initialState: RunState): Promise<RunState> {
+    let state = initialState;
+
+    while (state.phase === "developing" || state.phase === "reviewing") {
+      state = state.phase === "developing"
+        ? await this.finishDevelopment(state)
+        : await this.finishReview(state);
+    }
+
+    return state;
+  }
+
+  private async finishDevelopment(state: RunState): Promise<RunState> {
+    const specification = await readFile(runArtifactPath(state, "specification.md"), "utf8");
+    const plan = await readFile(runArtifactPath(state, "plan.md"), "utf8");
+    const chunkId = activeChunkId(state);
+    const chunk = await readFile(runArtifactPath(state, chunkDefinitionPath(chunkId)), "utf8");
+    const developerOutput = await this.deps.roleAgent.prompt(
+      "developer",
+      buildRoleHandoff("developer", { specification, plan, chunk }),
+    );
+    const { report, deviated } = parseDeveloperOutput(developerOutput);
+
+    await this.deps.artifactStore.writeText(implementationReportPath(chunkId), report);
+
+    const next = applyTransition(state, { type: "developer-finished", deviated }, this.deps.policy);
+    await this.deps.artifactStore.appendTransition({ type: "developer-finished", deviated }, next);
+
+    return next;
+  }
+
+  private async finishReview(state: RunState): Promise<RunState> {
+    const specification = await readFile(runArtifactPath(state, "specification.md"), "utf8");
+    const plan = await readFile(runArtifactPath(state, "plan.md"), "utf8");
+    const chunkId = activeChunkId(state);
+    const chunk = await readFile(runArtifactPath(state, chunkDefinitionPath(chunkId)), "utf8");
+    const review = await readFile(runArtifactPath(state, implementationReportPath(chunkId)), "utf8");
+    const reviewerOutput = await this.deps.roleAgent.prompt(
+      "reviewer",
+      buildRoleHandoff("reviewer", { specification, plan, chunk, review }),
+    );
+    const { verdict, report } = parseReviewerOutput(reviewerOutput);
+    const attempt = state.chunks.find(({ id }) => id === chunkId)?.reviewAttempts;
+
+    if (attempt === undefined) {
+      throw new Error(`Missing active chunk for ${state.phase}`);
+    }
+
+    await this.deps.artifactStore.writeText(reviewArtifactPath(chunkId, attempt + 1), report);
+
+    const next = applyTransition(state, { type: "reviewed", verdict }, this.deps.policy);
+    await this.deps.artifactStore.appendTransition({ type: "reviewed", verdict }, next);
 
     return next;
   }
