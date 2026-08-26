@@ -36,6 +36,15 @@ describe("PresetStore", () => {
     });
   });
 
+  it("loads an existing empty preset file as empty", async () => {
+    await withTempDir(async (workspace) => {
+      await mkdir(join(workspace, ".johnsons"), { recursive: true });
+      await writeFile(presetPath(workspace), "{}", "utf8");
+
+      await expect(store().list(workspace)).resolves.toEqual({});
+    });
+  });
+
   it("saves and reloads presets atomically", async () => {
     await withTempDir(async (workspace) => {
       const presets = store();
