@@ -29,6 +29,41 @@ const policy = (): Policy =>
     requiredChecks: [],
   });
 
+const invalidPolicies = {
+  extraRootField: {
+    ...defaultPolicy,
+    apiKey: "secret-value",
+  },
+  extraRoleField: {
+    ...defaultPolicy,
+    roles: {
+      ...defaultPolicy.roles,
+      developer: {
+        ...defaultPolicy.roles.developer,
+        temperature: 0.2,
+      },
+    },
+  },
+  secretLookingField: {
+    ...defaultPolicy,
+    roles: {
+      ...defaultPolicy.roles,
+      reviewer: {
+        ...defaultPolicy.roles.reviewer,
+        providerToken: "shh",
+      },
+    },
+  },
+  wrongScalarType: {
+    ...defaultPolicy,
+    maxReviewAttempts: "2",
+  },
+  wrongListType: {
+    ...defaultPolicy,
+    requiredChecks: "npm test",
+  },
+} as const;
+
 describe("PresetStore", () => {
   it("returns the default preset when the file is absent", async () => {
     await withTempDir(async (workspace) => {
@@ -54,6 +89,33 @@ describe("PresetStore", () => {
 
       await expect(readFile(presetPath(workspace), "utf8")).resolves.toBe(JSON.stringify({ fast: saved }));
       await expect(presets.list(workspace)).resolves.toEqual({ fast: saved });
+    });
+  });
+
+  it.each(Object.entries(invalidPolicies))("rejects persisted policy with %s", async (_name, invalidPolicy) => {
+    await withTempDir(async (workspace) => {
+      const presets = store();
+
+      await mkdir(join(workspace, ".johnsons"), { recursive: true });
+      await writeFile(presetPath(workspace), JSON.stringify({ broken: invalidPolicy }), "utf8");
+
+      await expect(presets.list(workspace)).rejects.toThrow();
+    });
+  });
+
+  it.each(Object.entries(invalidPolicies))("rejects save input with %s", async (_name, invalidPolicy) => {
+    await withTempDir(async (workspace) => {
+      await expect(store().save(workspace, "broken", invalidPolicy as Policy)).rejects.toThrow();
+    });
+  });
+
+  it("round-trips defaultPolicy unchanged", async () => {
+    await withTempDir(async (workspace) => {
+      const presets = store();
+
+      await presets.save(workspace, "default-copy", defaultPolicy);
+
+      await expect(presets.list(workspace)).resolves.toEqual({ "default-copy": defaultPolicy });
     });
   });
 
