@@ -187,12 +187,28 @@ describe("PiRpcAgentProcess", () => {
       const stdin = spawnedChildren[0]?.stdin;
       if (!stdin) throw new Error("Missing stdin");
       const originalWrite = stdin.write.bind(stdin);
+      let abortCallbackCompleted = false;
       const writeSpy = vi.spyOn(stdin, "write").mockImplementation(
         ((chunk: any, ...rest: Array<any>) => {
-          setTimeout(() => {
-            originalWrite(chunk, ...rest);
-          }, 20);
-          return true;
+          const payload = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+          const callback = rest.at(-1);
+
+          if (payload.includes('"type":"abort"') && typeof callback === "function") {
+            const args = rest.slice(0, -1);
+
+            return originalWrite(
+              chunk,
+              ...args,
+              ((error?: Error | null) => {
+                setTimeout(() => {
+                  abortCallbackCompleted = true;
+                  callback(error);
+                }, 20);
+              }) as any,
+            );
+          }
+
+          return originalWrite(chunk, ...rest);
         }) as any,
       );
 
@@ -202,13 +218,7 @@ describe("PiRpcAgentProcess", () => {
 
         await expect(
           prompt.catch(async (error) => {
-            const abortRecord = (await readFile(join(root, "stdin.log"), "utf8"))
-              .split("\n")
-              .filter(Boolean)
-              .map((line) => JSON.parse(line))
-              .find((record) => record.type === "abort");
-            expect(abortRecord).toMatchObject({ type: "abort" });
-            expect(abortRecord.id).toEqual(expect.any(String));
+            expect(abortCallbackCompleted).toBe(true);
             expect(await readSignalLog(root)).toBe("");
             expect(isAlive(pid)).toBe(true);
             throw error;
