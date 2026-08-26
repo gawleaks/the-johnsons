@@ -175,27 +175,54 @@ describe("PiRpcAgentProcess", () => {
       process.env.PI_FAKE_RPC_STDIN_LOG = join(root, "stdin.log");
       process.env.PI_FAKE_RPC_SIGNAL_LOG = signalLog(root);
 
-      const agent = createProcess(root);
+      const agent = new PiRpcAgentProcess({
+        sessionDir: join(root, "session"),
+        name: "demo-run",
+        model: "demo/model",
+        timeoutMs: 80,
+        abortGraceMs: 500,
+      });
       await agent.start();
-      const prompt = agent.prompt("hello");
-      const pid = spawnedChildren[0]?.pid;
-      const timeoutAssertion = expect(prompt).rejects.toBeInstanceOf(RpcTimeoutError);
 
-      await timeoutAssertion;
-      const abortRecord = (await readFile(join(root, "stdin.log"), "utf8"))
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => JSON.parse(line))
-        .find((record) => record.type === "abort");
-      expect(abortRecord).toMatchObject({ type: "abort" });
-      expect(abortRecord.id).toEqual(expect.any(String));
-      expect(await readSignalLog(root)).toBe("");
-      expect(isAlive(pid)).toBe(true);
+      const stdin = spawnedChildren[0]?.stdin;
+      if (!stdin) throw new Error("Missing stdin");
+      const originalWrite = stdin.write.bind(stdin);
+      const writeSpy = vi.spyOn(stdin, "write").mockImplementation(
+        ((chunk: any, ...rest: Array<any>) => {
+          setTimeout(() => {
+            originalWrite(chunk, ...rest);
+          }, 20);
+          return true;
+        }) as any,
+      );
 
-      await new Promise((resolve) => setTimeout(resolve, 30));
+      try {
+        const pid = spawnedChildren[0]?.pid;
+        const prompt = agent.prompt("hello");
 
-      expect(await readSignalLog(root)).toContain("SIGTERM");
-      expect(isAlive(pid)).toBe(false);
+        await expect(
+          prompt.catch(async (error) => {
+            const abortRecord = (await readFile(join(root, "stdin.log"), "utf8"))
+              .split("\n")
+              .filter(Boolean)
+              .map((line) => JSON.parse(line))
+              .find((record) => record.type === "abort");
+            expect(abortRecord).toMatchObject({ type: "abort" });
+            expect(abortRecord.id).toEqual(expect.any(String));
+            expect(await readSignalLog(root)).toBe("");
+            expect(isAlive(pid)).toBe(true);
+            throw error;
+          }),
+        ).rejects.toBeInstanceOf(RpcTimeoutError);
+
+        await new Promise((resolve) => setTimeout(resolve, 550));
+
+        expect(await readSignalLog(root)).toContain("SIGTERM");
+        expect(isAlive(pid)).toBe(false);
+      } finally {
+        writeSpy.mockRestore();
+      }
+
     });
   });
 

@@ -193,7 +193,7 @@ export class PiRpcAgentProcess implements AgentProcess {
 
     const promptId = randomUUID();
 
-    return await new Promise<AgentProcessResult>((resolve, reject) => {
+    const promptPromise = new Promise<AgentProcessResult>((resolve, reject) => {
       const state: PromptState = {
         id: promptId,
         resolve,
@@ -211,14 +211,23 @@ export class PiRpcAgentProcess implements AgentProcess {
       }, this.#options.timeoutMs);
 
       this.#currentPrompt = state;
-      this.#write({ id: promptId, type: "prompt", message });
     });
+
+    try {
+      await this.#write({ id: promptId, type: "prompt", message });
+    } catch (error) {
+      await this.#failCurrentPrompt(
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
+
+    return await promptPromise;
   }
 
   async abort(): Promise<void> {
     if (!this.#child?.stdin) return;
 
-    this.#write({ id: randomUUID(), type: "abort" });
+    await this.#write({ id: randomUUID(), type: "abort" });
   }
 
   async close(): Promise<void> {
@@ -235,14 +244,40 @@ export class PiRpcAgentProcess implements AgentProcess {
     await exited;
   }
 
-  #write(payload: Record<string, unknown>): void {
+  #write(payload: Record<string, unknown>): Promise<void> {
     const child = this.#child;
 
     if (!child?.stdin?.writable) {
       throw new PrematureNonzeroExitError();
     }
 
-    child.stdin.write(`${JSON.stringify(payload)}\n`);
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: Error | null): void => {
+        if (settled) return;
+        settled = true;
+        child.stdin.off("error", onError);
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve();
+      };
+
+      const onError = (error: Error): void => {
+        finish(error);
+      };
+
+      child.stdin.once("error", onError);
+
+      try {
+        child.stdin.write(`${JSON.stringify(payload)}\n`, (error?: Error | null) => {
+          finish(error ?? undefined);
+        });
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   }
 
   #handleStdout(chunk: Buffer | string): void {
@@ -290,7 +325,7 @@ export class PiRpcAgentProcess implements AgentProcess {
       if (this.#timeoutGraceChild === child) child.kill("SIGTERM");
     }, this.#options.abortGraceMs);
 
-    await this.abort();
+    await this.abort().catch(() => undefined);
     await this.#failCurrentPrompt(new RpcTimeoutError(), false);
   }
 
