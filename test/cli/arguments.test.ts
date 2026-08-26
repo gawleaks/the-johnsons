@@ -22,6 +22,17 @@ describe("parseCommand", () => {
     cwd.mockRestore();
   });
 
+  it("uses the current working directory when runs workspace is omitted", () => {
+    const cwd = vi.spyOn(process, "cwd").mockReturnValue("/workspace");
+
+    expect(parseCommand(["runs"])).toEqual({
+      type: "runs",
+      workspace: "/workspace",
+    });
+
+    cwd.mockRestore();
+  });
+
   it("accepts resume run id before workspace", () => {
     expect(parseCommand(["resume", "run-1", "--workspace", "/repo"])).toEqual({
       type: "resume",
