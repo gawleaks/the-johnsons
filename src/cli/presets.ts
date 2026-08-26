@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { atomicWrite } from "../storage/files.js";
-import { defaultPolicy, validatePolicy, type Policy } from "../policy/config.js";
+import { defaultPolicy, validatePolicy, type Policy, type RoleConfig, type ThinkingLevel } from "../policy/config.js";
 
 export interface PresetStore {
   list(workspace: string): Promise<Readonly<Record<string, Policy>>>;
@@ -16,6 +16,74 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isPathLikeName = (name: string): boolean =>
   name.length === 0 || name === "." || name === ".." || name.includes("/") || name.includes("\\");
 
+const policyKeys = ["maxReviewAttempts", "checkpointMode", "roles", "requiredChecks"] as const;
+const roleNames = ["architect", "planner", "developer", "reviewer"] as const;
+const roleKeys = ["model", "thinking", "tools", "timeoutMs"] as const;
+const checkpointModes = new Set<Policy["checkpointMode"]>(["metadata", "git"]);
+const thinkingLevels = new Set<ThinkingLevel>(["off", "low", "medium", "high", "max"]);
+
+const hasExactKeys = (value: Record<string, unknown>, keys: ReadonlyArray<string>): boolean =>
+  Object.keys(value).length === keys.length && keys.every((key) => key in value);
+
+const parseStringList = (value: unknown): ReadonlyArray<string> => {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
+    throw new Error("Invalid preset policy");
+  }
+
+  return value;
+};
+
+const parseRoleConfig = (value: unknown): RoleConfig => {
+  if (!isRecord(value) || !hasExactKeys(value, roleKeys)) {
+    throw new Error("Invalid preset policy");
+  }
+
+  if (typeof value.model !== "string" || !thinkingLevels.has(value.thinking as ThinkingLevel)) {
+    throw new Error("Invalid preset policy");
+  }
+
+  if (!Number.isInteger(value.timeoutMs)) {
+    throw new Error("Invalid preset policy");
+  }
+
+  return {
+    model: value.model,
+    thinking: value.thinking as ThinkingLevel,
+    tools: parseStringList(value.tools),
+    timeoutMs: value.timeoutMs as number,
+  };
+};
+
+const parseRoles = (value: unknown): Policy["roles"] => {
+  if (!isRecord(value) || !hasExactKeys(value, roleNames)) {
+    throw new Error("Invalid preset policy");
+  }
+
+  return {
+    architect: parseRoleConfig(value.architect),
+    planner: parseRoleConfig(value.planner),
+    developer: parseRoleConfig(value.developer),
+    reviewer: parseRoleConfig(value.reviewer),
+  };
+};
+
+const parsePolicy = (value: unknown): Policy => {
+  if (!isRecord(value) || !hasExactKeys(value, policyKeys)) {
+    throw new Error("Invalid preset policy");
+  }
+
+  if (!Number.isInteger(value.maxReviewAttempts) || !checkpointModes.has(value.checkpointMode as Policy["checkpointMode"])) {
+    throw new Error("Invalid preset policy");
+  }
+
+  return validatePolicy({
+    maxReviewAttempts: value.maxReviewAttempts as number,
+    checkpointMode: value.checkpointMode as Policy["checkpointMode"],
+    roles: parseRoles(value.roles),
+    requiredChecks: parseStringList(value.requiredChecks),
+  });
+};
+
 const loadPersistedPresets = async (workspace: string): Promise<Record<string, Policy>> => {
   const content = await readFile(presetFilePath(workspace), "utf8");
   const parsed = JSON.parse(content);
@@ -24,9 +92,7 @@ const loadPersistedPresets = async (workspace: string): Promise<Record<string, P
     throw new Error("Invalid preset file");
   }
 
-  return Object.fromEntries(
-    Object.entries(parsed).map(([name, value]) => [name, validatePolicy(value as Policy)]),
-  );
+  return Object.fromEntries(Object.entries(parsed).map(([name, value]) => [name, parsePolicy(value)]));
 };
 
 const loadPersistedPresetsOrEmpty = async (workspace: string): Promise<Record<string, Policy>> => {
@@ -60,7 +126,7 @@ export class PresetStore implements PresetStore {
     }
 
     const presets = await loadPersistedPresetsOrEmpty(workspace);
-    const next = { ...presets, [name]: validatePolicy(policy) };
+    const next = { ...presets, [name]: parsePolicy(policy) };
 
     await atomicWrite(presetFilePath(workspace), JSON.stringify(next));
   }
