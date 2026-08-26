@@ -23,7 +23,9 @@ const checkpointModes = new Set<Policy["checkpointMode"]>(["metadata", "git"]);
 const thinkingLevels = new Set<ThinkingLevel>(["off", "low", "medium", "high", "max"]);
 
 const hasExactKeys = (value: Record<string, unknown>, keys: ReadonlyArray<string>): boolean =>
-  Object.keys(value).length === keys.length && keys.every((key) => key in value);
+  Object.getPrototypeOf(value) === Object.prototype &&
+  Object.keys(value).length === keys.length &&
+  keys.every((key) => Object.hasOwn(value, key));
 
 const parseStringList = (value: unknown): ReadonlyArray<string> => {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {

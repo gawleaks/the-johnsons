@@ -29,6 +29,9 @@ const policy = (): Policy =>
     requiredChecks: [],
   });
 
+const withInheritedField = <T extends object>(value: T, inherited: Record<string, unknown>): T =>
+  Object.assign(Object.create(inherited), value);
+
 const invalidPolicies = {
   extraRootField: {
     ...defaultPolicy,
@@ -53,6 +56,60 @@ const invalidPolicies = {
         providerToken: "shh",
       },
     },
+  },
+  invalidThinkingEnum: {
+    ...defaultPolicy,
+    roles: {
+      ...defaultPolicy.roles,
+      developer: {
+        ...defaultPolicy.roles.developer,
+        thinking: "ultra",
+      },
+    },
+  },
+  nonStringToolsEntry: {
+    ...defaultPolicy,
+    roles: {
+      ...defaultPolicy.roles,
+      developer: {
+        ...defaultPolicy.roles.developer,
+        tools: ["npm test", 1],
+      },
+    },
+  },
+  nonIntegerTimeoutMs: {
+    ...defaultPolicy,
+    roles: {
+      ...defaultPolicy.roles,
+      developer: {
+        ...defaultPolicy.roles.developer,
+        timeoutMs: 1.5,
+      },
+    },
+  },
+  missingRoleName: {
+    ...defaultPolicy,
+    roles: {
+      architect: defaultPolicy.roles.architect,
+      planner: defaultPolicy.roles.planner,
+      developer: defaultPolicy.roles.developer,
+    } as unknown as Policy["roles"],
+  },
+  extraRoleName: {
+    ...defaultPolicy,
+    roles: {
+      ...defaultPolicy.roles,
+      auditor: defaultPolicy.roles.reviewer,
+    } as unknown as Policy["roles"],
+  },
+  malformedRoleName: {
+    ...defaultPolicy,
+    roles: {
+      architect: defaultPolicy.roles.architect,
+      planner: defaultPolicy.roles.planner,
+      developer: defaultPolicy.roles.developer,
+      "reviewer-v2": defaultPolicy.roles.reviewer,
+    } as unknown as Policy["roles"],
   },
   wrongScalarType: {
     ...defaultPolicy,
@@ -89,6 +146,14 @@ describe("PresetStore", () => {
 
       await expect(readFile(presetPath(workspace), "utf8")).resolves.toBe(JSON.stringify({ fast: saved }));
       await expect(presets.list(workspace)).resolves.toEqual({ fast: saved });
+    });
+  });
+
+  it("rejects save input with inherited extra properties", async () => {
+    await withTempDir(async (workspace) => {
+      const inheritedFieldPolicy = withInheritedField(policy(), { apiKey: "secret-value" });
+
+      await expect(store().save(workspace, "broken", inheritedFieldPolicy as Policy)).rejects.toThrow();
     });
   });
 
