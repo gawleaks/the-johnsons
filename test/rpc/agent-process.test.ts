@@ -194,6 +194,10 @@ describe("PiRpcAgentProcess", () => {
           const callback = rest.at(-1);
 
           if (payload.includes('"type":"abort"') && typeof callback === "function") {
+            expect(JSON.parse(payload)).toMatchObject({
+              type: "abort",
+              id: expect.any(String),
+            });
             const args = rest.slice(0, -1);
 
             return originalWrite(
