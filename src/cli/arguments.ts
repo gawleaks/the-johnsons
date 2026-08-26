@@ -95,6 +95,12 @@ const parseStart = (argv: readonly string[]): Command => {
 };
 
 const parseResume = (argv: readonly string[]): Command => {
+  const firstPositionalIndex = argv.findIndex((token) => !isFlag(token));
+
+  if (firstPositionalIndex > -1 && argv.slice(0, firstPositionalIndex).includes("--workspace")) {
+    throw new Error("Argument order: --workspace must follow run id");
+  }
+
   const parsed = parseOptions(argv, supportedResumeFlags);
   const runId = parsed.positional[0];
   const extraRunId = parsed.positional[1];
