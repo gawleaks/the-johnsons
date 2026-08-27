@@ -137,6 +137,18 @@ describe("PresetStore", () => {
     });
   });
 
+  it.each(["", ".", "..", "foo/bar", "foo\\backslash"])(
+    "rejects persisted unsafe preset name %j",
+    async (name) => {
+      await withTempDir(async (workspace) => {
+        await mkdir(join(workspace, ".johnsons"), { recursive: true });
+        await writeFile(presetPath(workspace), JSON.stringify({ [name]: policy() }), "utf8");
+
+        await expect(store().list(workspace)).rejects.toThrow(/preset/i);
+      });
+    },
+  );
+
   it("saves and reloads presets atomically", async () => {
     await withTempDir(async (workspace) => {
       const presets = store();
