@@ -16,6 +16,14 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const isPathLikeName = (name: string): boolean =>
   name.length === 0 || name === "." || name === ".." || name.includes("/") || name.includes("\\");
 
+const assertSafePresetName = (name: string): string => {
+  if (isPathLikeName(name)) {
+    throw new Error(`Invalid preset name: ${name}`);
+  }
+
+  return name;
+};
+
 const policyKeys = ["maxReviewAttempts", "checkpointMode", "roles", "requiredChecks"] as const;
 const roleNames = ["architect", "planner", "developer", "reviewer"] as const;
 const roleKeys = ["model", "thinking", "tools", "timeoutMs"] as const;
@@ -94,7 +102,9 @@ const loadPersistedPresets = async (workspace: string): Promise<Record<string, P
     throw new Error("Invalid preset file");
   }
 
-  return Object.fromEntries(Object.entries(parsed).map(([name, value]) => [name, parsePolicy(value)]));
+  return Object.fromEntries(
+    Object.entries(parsed).map(([name, value]) => [assertSafePresetName(name), parsePolicy(value)]),
+  );
 };
 
 const loadPersistedPresetsOrEmpty = async (workspace: string): Promise<Record<string, Policy>> => {
@@ -123,12 +133,9 @@ export class PresetStore implements PresetStore {
   }
 
   async save(workspace: string, name: string, policy: Policy): Promise<void> {
-    if (isPathLikeName(name)) {
-      throw new Error(`Invalid preset name: ${name}`);
-    }
-
+    const safeName = assertSafePresetName(name);
     const presets = await loadPersistedPresetsOrEmpty(workspace);
-    const next = { ...presets, [name]: parsePolicy(policy) };
+    const next = { ...presets, [safeName]: parsePolicy(policy) };
 
     await atomicWrite(presetFilePath(workspace), JSON.stringify(next));
   }
