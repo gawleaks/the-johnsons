@@ -106,7 +106,7 @@ describe("main", () => {
 
   it("uses root-owned artifacts with prepared git cwd for start and resume", async () => {
     await withTempDir(async (workspace) => {
-      const preparedWorkspace = join(workspace, "git-worktree");
+      const preparedWorkspace = join(workspace, ".johnsons", "worktrees", "run-1");
       let mode: Policy["checkpointMode"] | undefined;
       let stateWorkspace: string | undefined;
       const roleCalls: Array<{ workspace: string; executionWorkspace: string }> = [];

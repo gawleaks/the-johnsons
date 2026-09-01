@@ -1,5 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { appendJsonLine, atomicWrite, safeRelativePath } from "./files.js";
 import type { ChunkState, RunState, Transition } from "../domain/types.js";
 
@@ -91,14 +91,20 @@ const runRoot = (workspace: string, runId: string): string => join(workspace, ".
 const artifactPath = (workspace: string, runId: string, name: string): string =>
   safeRelativePath(runRoot(workspace, runId), name);
 
-const validateInitialIdentity = (runId: string, initial: RunState): void => {
-  if (initial.runId !== runId) {
+const isExecutionWorkspace = (artifactWorkspace: string, runId: string, executionWorkspace: string): boolean => {
+  const root = resolve(artifactWorkspace);
+
+  return executionWorkspace === root || executionWorkspace === join(root, ".johnsons", "worktrees", runId);
+};
+
+const validateInitialIdentity = (workspace: string, runId: string, initial: RunState): void => {
+  if (initial.runId !== runId || !isExecutionWorkspace(workspace, runId, initial.workspace)) {
     throw new Error("Initial run state does not match artifact store identity");
   }
 };
 
-const validateLoadedState = (runId: string, state: RunState): void => {
-  if (state.runId !== runId) {
+const validateLoadedState = (workspace: string, runId: string, state: RunState): void => {
+  if (state.runId !== runId || !isExecutionWorkspace(workspace, runId, state.workspace)) {
     throw new Error("Invalid run state");
   }
 
@@ -135,7 +141,7 @@ export class ArtifactStore {
   static async create(workspace: string, runId: string, initial: RunState): Promise<ArtifactStore> {
     const store = new ArtifactStore(workspace, safeRunId(runId));
 
-    validateInitialIdentity(runId, initial);
+    validateInitialIdentity(workspace, runId, initial);
 
     await store.writeJson(stateFileName, initial);
 
@@ -172,7 +178,7 @@ export class ArtifactStore {
   async loadState(): Promise<RunState> {
     const state = parseState(JSON.parse(await this.readText(stateFileName)));
 
-    validateLoadedState(this.runId, state);
+    validateLoadedState(this.workspace, this.runId, state);
 
     return state;
   }
