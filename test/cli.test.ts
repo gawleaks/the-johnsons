@@ -190,6 +190,12 @@ describe("main", () => {
         presetStore: {
           list: async () => ({ default: defaultPolicy }),
         },
+        loadAvailableModels: async () => [
+          persistedPolicy.roles.architect.model,
+          persistedPolicy.roles.planner.model,
+          persistedPolicy.roles.developer.model,
+          persistedPolicy.roles.reviewer.model,
+        ],
         createRoleAgent: (_policy, _runId, runWorkspace, executionWorkspace) => {
           roleWorkspaces.push(`${runWorkspace} -> ${executionWorkspace}`);
           return {
@@ -210,6 +216,34 @@ describe("main", () => {
       expect(createdPolicies).toEqual([persistedPolicy]);
       expect(roleWorkspaces).toEqual([`${workspace} -> ${workspace}`]);
       expect(dependencies.roleAgent.closed()).toBe(0);
+    });
+  });
+
+  it("validates persisted resume models before creating a role agent", async () => {
+    await withTempDir(async (workspace) => {
+      const policy: Policy = {
+        ...defaultPolicy,
+        roles: {
+          ...defaultPolicy.roles,
+          reviewer: { ...defaultPolicy.roles.reviewer, model: "missing/model" },
+        },
+      };
+      const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));
+      await store.writeJson("policy.json", policy);
+      let agents = 0;
+      const dependencies = createDependencies(workspace, {
+        loadAvailableModels: async () => [],
+        createRoleAgent: () => {
+          agents += 1;
+          return {
+            async prompt(): Promise<string> { return ""; },
+            async close(): Promise<void> { return; },
+          };
+        },
+      });
+
+      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      expect(agents).toBe(0);
     });
   });
 

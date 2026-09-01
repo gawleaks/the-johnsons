@@ -256,6 +256,7 @@ const resumeRun = async (
 ): Promise<number> => {
   const artifactStore = await ArtifactStore.open(command.workspace, command.runId);
   const policy = await loadPersistedPolicy(command.workspace, command.runId);
+  validateModels(policy, await dependencies.loadAvailableModels(policy.roles.architect.model));
   const state = await artifactStore.loadState();
   const roleAgent = dependencies.createRoleAgent(policy, command.runId, command.workspace, state.workspace);
   const ui = new TerminalRunUi(dependencies.createTerminalIo());
