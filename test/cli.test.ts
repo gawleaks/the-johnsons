@@ -104,6 +104,66 @@ describe("main", () => {
     });
   });
 
+  it("stores the prepared git workspace in run state and artifacts", async () => {
+    await withTempDir(async (workspace) => {
+      const preparedWorkspace = join(workspace, "git-worktree");
+      let mode: Policy["checkpointMode"] | undefined;
+      let stateWorkspace: string | undefined;
+      const roleWorkspaces: string[] = [];
+      const gitPolicy: Policy = { ...defaultPolicy, checkpointMode: "git" };
+
+      const dependencies = createDependencies(workspace, {
+        createTerminalIo: () => ({
+          choose: async () => "git",
+          confirm: async () => true,
+          ask: async () => "",
+          write: () => undefined,
+        }),
+        presetStore: {
+          list: async () => ({ git: gitPolicy }),
+        },
+        loadAvailableModels: async () => [
+          gitPolicy.roles.architect.model,
+          gitPolicy.roles.planner.model,
+          gitPolicy.roles.developer.model,
+          gitPolicy.roles.reviewer.model,
+        ],
+        workspaceManager: {
+          setMode: (nextMode) => {
+            mode = nextMode;
+          },
+          prepare: async () => preparedWorkspace,
+        },
+        createRoleAgent: (_policy, _runId, runWorkspace) => {
+          roleWorkspaces.push(runWorkspace);
+
+          return {
+            async prompt(): Promise<string> {
+              return "";
+            },
+            async close(): Promise<void> {
+              return;
+            },
+          };
+        },
+        createRunController: ({ artifactStore, policy }) => ({
+          start: async () => {
+            const state = await artifactStore.loadState();
+            stateWorkspace = state.workspace;
+            await expect(readFile(policyPath(preparedWorkspace, "run-1"), "utf8")).resolves.toBe(JSON.stringify(policy));
+            return state;
+          },
+          resume: async () => createRunState("run-1", preparedWorkspace),
+        }),
+      });
+
+      await expect(main(["start", "--workspace", workspace, "--preset", "git"], dependencies)).resolves.toBe(0);
+      expect(mode).toBe("git");
+      expect(stateWorkspace).toBe(preparedWorkspace);
+      expect(roleWorkspaces).toEqual([preparedWorkspace]);
+    });
+  });
+
   it("resumes an existing run with its persisted policy rather than current defaults", async () => {
     await withTempDir(async (workspace) => {
       const persistedPolicy: Policy = {
@@ -138,6 +198,33 @@ describe("main", () => {
     });
   });
 
+  it("closes the role agent when resume fails", async () => {
+    await withTempDir(async (workspace) => {
+      const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));
+      await store.writeJson("policy.json", defaultPolicy);
+      let closes = 0;
+      const dependencies = createDependencies(workspace, {
+        createRoleAgent: () => ({
+          async prompt(): Promise<string> {
+            return "";
+          },
+          async close(): Promise<void> {
+            closes += 1;
+          },
+        }),
+        createRunController: () => ({
+          start: async () => createRunState("run-1", workspace),
+          resume: async () => {
+            throw new Error("resume failed");
+          },
+        }),
+      });
+
+      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      expect(closes).toBe(1);
+    });
+  });
+
   it("lists durable run ids and phases in lexical order", async () => {
     await withTempDir(async (workspace) => {
       await writeState(workspace, "run-2", { ...createRunState("run-2", workspace), phase: "planning" });
@@ -155,6 +242,32 @@ describe("main", () => {
 
       await expect(main(["runs", "--workspace", workspace], dependencies)).resolves.toBe(0);
       expect(dependencies.io.lines).toEqual([]);
+    });
+  });
+
+  it("validates the model catalog before preparing the workspace", async () => {
+    await withTempDir(async (workspace) => {
+      let prepareCalls = 0;
+      const errors: string[] = [];
+      const dependencies = createDependencies(workspace, {
+        loadAvailableModels: async () => [],
+        workspaceManager: {
+          prepare: async () => {
+            prepareCalls += 1;
+            return workspace;
+          },
+        },
+        stderr: {
+          write: (chunk) => {
+            errors.push(chunk);
+            return true;
+          },
+        },
+      });
+
+      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      expect(prepareCalls).toBe(0);
+      expect(errors.join("")).toMatch(/unavailable models/i);
     });
   });
 
