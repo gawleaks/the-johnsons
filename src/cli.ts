@@ -237,10 +237,10 @@ const startRun = async (
 
   const runId = dependencies.randomUUID();
   dependencies.workspaceManager.setMode?.(validatedPolicy.checkpointMode);
-  await dependencies.workspaceManager.prepare(command.workspace, runId);
-  const artifactStore = await ArtifactStore.create(command.workspace, runId, createRunState(runId, command.workspace));
+  const preparedWorkspace = await dependencies.workspaceManager.prepare(command.workspace, runId);
+  const artifactStore = await ArtifactStore.create(preparedWorkspace, runId, createRunState(runId, preparedWorkspace));
   await artifactStore.writeJson("policy.json", validatedPolicy);
-  const roleAgent = dependencies.createRoleAgent(validatedPolicy, runId, command.workspace);
+  const roleAgent = dependencies.createRoleAgent(validatedPolicy, runId, preparedWorkspace);
 
   try {
     await dependencies.createRunController({ artifactStore, policy: validatedPolicy, roleAgent, ui }).start();
