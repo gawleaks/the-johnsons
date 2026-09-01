@@ -1,9 +1,12 @@
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { defaultPolicy, rolePrompts, type RoleConfig } from "../../src/policy/config.js";
 import type { Role } from "../../src/domain/types.js";
-import type { AgentProcess, AgentProcessResult } from "../../src/rpc/agent-process.js";
+import type { AgentProcess, AgentProcessResult, PiRpcAgentProcessOptions } from "../../src/rpc/agent-process.js";
 import {
   PiRoleAgent,
+  createAgentProcessFactory,
+  loadAvailableModels,
   validateModels,
   type AgentProcessFactory,
 } from "../../src/cli/role-agent.js";
@@ -36,6 +39,114 @@ describe("validateModels", () => {
   it("rejects a policy whose reviewer model is unavailable", () => {
     expect(() => validateModels(defaultPolicy, ["openai/gpt-5.6-sol"]))
       .toThrow(/anthropic\/sonnet-5/);
+  });
+});
+
+describe("createAgentProcessFactory", () => {
+  it("wires each role to its own session directory and name", () => {
+    const created: PiRpcAgentProcessOptions[] = [];
+    class FakeProcess implements AgentProcess {
+      constructor(options: PiRpcAgentProcessOptions) {
+        created.push(options);
+      }
+
+      async start(): Promise<void> { return undefined; }
+      async prompt(): Promise<AgentProcessResult> { return result([]); }
+      async abort(): Promise<void> { return undefined; }
+      async close(): Promise<void> { return undefined; }
+    }
+
+    const factory = createAgentProcessFactory("/tmp/session", "johnsons", FakeProcess as unknown as new (options: PiRpcAgentProcessOptions) => AgentProcess);
+
+    factory("architect", defaultPolicy.roles.architect);
+    factory("reviewer", defaultPolicy.roles.reviewer);
+
+    expect(created).toEqual([
+      {
+        sessionDir: "/tmp/session/architect",
+        name: "johnsons-architect",
+        model: defaultPolicy.roles.architect.model,
+        timeoutMs: defaultPolicy.roles.architect.timeoutMs,
+      },
+      {
+        sessionDir: "/tmp/session/reviewer",
+        name: "johnsons-reviewer",
+        model: defaultPolicy.roles.reviewer.model,
+        timeoutMs: defaultPolicy.roles.reviewer.timeoutMs,
+      },
+    ]);
+  });
+});
+
+describe("loadAvailableModels", () => {
+  const createChild = () => {
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const stdin = new PassThrough();
+    let killedWith: NodeJS.Signals | undefined;
+
+    return {
+      child: {
+        stdout,
+        stderr,
+        stdin,
+        kill: (signal?: NodeJS.Signals) => {
+          killedWith = signal;
+          return true;
+        },
+        on: stdout.on.bind(stdout),
+        off: stdout.off.bind(stdout),
+        once: stdout.once.bind(stdout),
+      } as unknown as import("node:child_process").ChildProcessWithoutNullStreams,
+      stdout,
+      stderr,
+      stdin,
+      killedWith: () => killedWith,
+    };
+  };
+
+  it("loads provider/id strings from the catalog response", async () => {
+    const fake = createChild();
+    const modelsPromise = loadAvailableModels("openai/gpt-5.6-sol", {
+      mkdtemp: async () => "/tmp/catalog",
+      rm: async () => undefined,
+      spawn: () => fake.child,
+    });
+
+    fake.stdout.write('{"type":"response","id":"catalog","models":[{"provider":"openai","id":"gpt-5.6-sol"},{"provider":"anthropic","id":"sonnet-5"}]}' + "\n");
+
+    await expect(modelsPromise).resolves.toEqual(["openai/gpt-5.6-sol", "anthropic/sonnet-5"]);
+    expect(fake.stdin.read()?.toString("utf8")).toContain('"type":"get_available_models"');
+    expect(fake.killedWith()).toBe("SIGTERM");
+  });
+
+  it("uses a generic failure message when pi exits early", async () => {
+    const fake = createChild();
+    const modelsPromise = loadAvailableModels("openai/gpt-5.6-sol", {
+      mkdtemp: async () => "/tmp/catalog",
+      rm: async () => undefined,
+      spawn: () => fake.child,
+    });
+
+    await Promise.resolve();
+    fake.stderr.write("token=secret\n");
+    fake.stdout.emit("exit", 1);
+
+    await expect(modelsPromise).rejects.toThrow(/failed to load model catalog/i);
+    await expect(modelsPromise).rejects.not.toThrow(/token=secret/i);
+  });
+
+  it("rejects invalid catalog payloads", async () => {
+    const fake = createChild();
+    const modelsPromise = loadAvailableModels("openai/gpt-5.6-sol", {
+      mkdtemp: async () => "/tmp/catalog",
+      rm: async () => undefined,
+      spawn: () => fake.child,
+    });
+
+    fake.stdout.write('{"type":"response","id":"catalog","models":[{"provider":"openai"}]}' + "\n");
+
+    await expect(modelsPromise).rejects.toThrow(/invalid model catalog response/i);
   });
 });
 

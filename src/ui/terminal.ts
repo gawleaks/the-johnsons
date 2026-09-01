@@ -14,6 +14,11 @@ export interface TerminalIo {
 const roles = ["architect", "planner", "developer", "reviewer"] as const;
 const thinkingLevels = new Set<ThinkingLevel>(["off", "low", "medium", "high", "max"]);
 
+type TerminalIoDependencies = {
+  readonly question: (prompt: string) => Promise<string>;
+  readonly write: (line: string) => void;
+};
+
 const question = async (prompt: string): Promise<string> => {
   const readline = createInterface({ input: stdin, output: stdout });
 
@@ -24,19 +29,24 @@ const question = async (prompt: string): Promise<string> => {
   }
 };
 
-export const createTerminalIo = (): TerminalIo => ({
+const defaultTerminalDependencies: TerminalIoDependencies = {
+  question,
+  write: (line) => stdout.write(`${line}\n`),
+};
+
+export const createTerminalIo = (dependencies = defaultTerminalDependencies): TerminalIo => ({
   choose: async (title, options) => {
     const values = new Set(options);
 
     while (true) {
-      stdout.write(`${title}\n`);
-      options.forEach((option, index) => stdout.write(`${index + 1}. ${option}\n`));
-      const answer = (await question("> ")).trim();
+      dependencies.write(title);
+      options.forEach((option, index) => dependencies.write(`${index + 1}. ${option}`));
+      const answer = (await dependencies.question("> ")).trim();
       const byIndex = Number.parseInt(answer, 10);
       const choice = Number.isInteger(byIndex) ? options[byIndex - 1] : answer;
 
       if (choice === undefined || !values.has(choice)) {
-        stdout.write(`Choose one of: ${options.join(", ")}\n`);
+        dependencies.write(`Choose one of: ${options.join(", ")}`);
         continue;
       }
 
@@ -44,13 +54,12 @@ export const createTerminalIo = (): TerminalIo => ({
     }
   },
   confirm: async (title, message) => {
-    stdout.write(`${title}\n${message}\n`);
-    return ["y", "yes"].includes((await question("Confirm [y/N]: ")).trim().toLowerCase());
+    dependencies.write(title);
+    dependencies.write(message);
+    return ["y", "yes"].includes((await dependencies.question("Confirm [y/N]: ")).trim().toLowerCase());
   },
-  ask: async (title) => (await question(`${title}: `)).trim(),
-  write: (line) => {
-    stdout.write(`${line}\n`);
-  },
+  ask: async (title) => (await dependencies.question(`${title}: `)).trim(),
+  write: dependencies.write,
 });
 
 const clonePolicy = (policy: Policy): Policy => JSON.parse(JSON.stringify(policy)) as Policy;
