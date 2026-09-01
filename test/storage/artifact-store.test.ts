@@ -60,11 +60,23 @@ describe("ArtifactStore", () => {
     });
   });
 
-  it("rejects run id traversal on create", async () => {
+  it("opens an existing run store", async () => {
+    await withTempDir(async (workspace) => {
+      const initial = createRunState("run-1", workspace);
+      await ArtifactStore.create(workspace, "run-1", initial);
+
+      const reopened = await ArtifactStore.open(workspace, "run-1");
+
+      await expect(reopened.loadState()).resolves.toEqual(initial);
+    });
+  });
+
+  it("rejects run id traversal on create and open", async () => {
     await withTempDir(async (workspace) => {
       const initial = createRunState("../run-1", workspace);
 
       await expect(ArtifactStore.create(workspace, "../run-1", initial)).rejects.toThrow();
+      await expect(ArtifactStore.open(workspace, "../run-1")).rejects.toThrow();
     });
   });
 
