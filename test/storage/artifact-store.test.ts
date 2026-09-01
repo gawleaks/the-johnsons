@@ -82,12 +82,25 @@ describe("ArtifactStore", () => {
 
   it("stores artifacts separately from the execution workspace", async () => {
     await withTempDir(async (workspace) => {
-      const initial = createRunState("run-1", `${workspace}/worktree`);
+      const initial = createRunState("run-1", join(workspace, ".johnsons", "worktrees", "run-1"));
       const store = await ArtifactStore.create(workspace, "run-1", initial);
 
       await store.writeText("specification.md", "spec");
       await expect(store.loadState()).resolves.toEqual(initial);
       await expect(store.readText("specification.md")).resolves.toBe("spec");
+    });
+  });
+
+  it("rejects a state whose execution workspace escapes its artifact root", async () => {
+    await withTempDir(async (workspace) => {
+      const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));
+      await writeFile(
+        statePath(workspace, "run-1"),
+        JSON.stringify(createRunState("run-1", "/untrusted")),
+        "utf8",
+      );
+
+      await expect(store.loadState()).rejects.toThrow(/run state/i);
     });
   });
 
