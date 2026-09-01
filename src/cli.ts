@@ -187,7 +187,7 @@ export interface MainDependencies {
     prepare(workspace: string, runId: string): Promise<string>;
     setMode?(mode: Policy["checkpointMode"]): void;
   };
-  readonly createRoleAgent: (policy: Policy, runId: string, workspace: string) => RoleAgent & { close(): Promise<void> };
+  readonly createRoleAgent: (policy: Policy, runId: string, workspace: string, executionWorkspace: string) => RoleAgent & { close(): Promise<void> };
   readonly createRunController: (deps: RunControllerDeps) => Pick<RunController, "start" | "resume">;
 }
 
@@ -207,9 +207,9 @@ export const createProductionDependencies = (): MainDependencies => {
       },
       prepare: (workspace, runId) => new WorkspaceManager({ mode, commandAdapter }).prepare(workspace, runId),
     },
-    createRoleAgent: (policy, runId, workspace) => new PiRoleAgent(
+    createRoleAgent: (policy, runId, workspace, executionWorkspace) => new PiRoleAgent(
       policy.roles,
-      createAgentProcessFactory(join(workspace, ".johnsons", "runs", runId, "sessions")),
+      createAgentProcessFactory(join(workspace, ".johnsons", "runs", runId, "sessions"), executionWorkspace),
     ),
     createRunController: (deps) => new RunController(deps),
   };
@@ -240,7 +240,7 @@ const startRun = async (
   const preparedWorkspace = await dependencies.workspaceManager.prepare(command.workspace, runId);
   const artifactStore = await ArtifactStore.create(command.workspace, runId, createRunState(runId, preparedWorkspace));
   await artifactStore.writeJson("policy.json", validatedPolicy);
-  const roleAgent = dependencies.createRoleAgent(validatedPolicy, runId, preparedWorkspace);
+  const roleAgent = dependencies.createRoleAgent(validatedPolicy, runId, command.workspace, preparedWorkspace);
 
   try {
     await dependencies.createRunController({ artifactStore, policy: validatedPolicy, roleAgent, ui }).start();
@@ -257,7 +257,7 @@ const resumeRun = async (
   const artifactStore = await ArtifactStore.open(command.workspace, command.runId);
   const policy = await loadPersistedPolicy(command.workspace, command.runId);
   const state = await artifactStore.loadState();
-  const roleAgent = dependencies.createRoleAgent(policy, command.runId, state.workspace);
+  const roleAgent = dependencies.createRoleAgent(policy, command.runId, command.workspace, state.workspace);
   const ui = new TerminalRunUi(dependencies.createTerminalIo());
 
   try {

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -7,7 +7,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
 const helperPath = fileURLToPath(new URL("../helpers/fake-pi-rpc.mjs", import.meta.url));
 
-const spawnCalls: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+const spawnCalls: Array<{ command: string; args: ReadonlyArray<string>; cwd?: string }> = [];
 const spawnedChildren: ChildProcessWithoutNullStreams[] = [];
 
 vi.mock("node:child_process", async () => {
@@ -15,7 +15,7 @@ vi.mock("node:child_process", async () => {
   return {
     ...actual,
     spawn: (command: string, args: ReadonlyArray<string>, options: any) => {
-      spawnCalls.push({ command, args });
+      spawnCalls.push({ command, args, cwd: options?.cwd });
 
       const child = actual.spawn(process.execPath, [helperPath, command, ...args], {
         ...options,
@@ -52,11 +52,12 @@ const withTempDir = async <T>(run: (root: string) => Promise<T>): Promise<T> => 
   }
 };
 
-const createProcess = (root: string) =>
+const createProcess = (root: string, cwd?: string) =>
   new PiRpcAgentProcess({
     sessionDir: join(root, "session"),
     name: "demo-run",
     model: "demo/model",
+    cwd,
     timeoutMs: 80,
     abortGraceMs: 20,
   });
@@ -325,7 +326,23 @@ describe("PiRpcAgentProcess", () => {
           "--model",
           "demo/model",
         ],
+        cwd: undefined,
       });
+
+      await agent.close();
+    });
+  });
+
+  it("passes cwd to the pi child when supplied", async () => {
+    await withTempDir(async (root) => {
+      process.env.PI_FAKE_RPC_SCENARIO = "success";
+      const cwd = join(root, "worktree");
+      await mkdir(cwd, { recursive: true });
+
+      const agent = createProcess(root, cwd);
+      await agent.start();
+
+      expect(spawnCalls[0]?.cwd).toBe(cwd);
 
       await agent.close();
     });
