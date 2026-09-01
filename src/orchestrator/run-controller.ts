@@ -1,4 +1,3 @@
-import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { applyTransition } from "../domain/workflow.js";
 import type {
@@ -166,8 +165,6 @@ const parsePlan = (output: string): {
   };
 };
 
-const runRoot = (state: RunState): string => join(state.workspace, ".johnsons", "runs", state.runId);
-const runArtifactPath = (state: RunState, name: string): string => join(runRoot(state), name);
 const chunkDefinitionPath = (id: string): string => join("chunks", id, "definition.md");
 const implementationReportPath = (id: string): string => join("chunks", id, "implementation-report.md");
 const reviewArtifactPath = (id: string, attempt: number): string => join("chunks", id, `review-${attempt}.md`);
@@ -234,20 +231,14 @@ const parseReviewerOutput = (output: string): { readonly verdict: ReviewVerdict;
   return { verdict: parsed.verdict as ReviewVerdict, report: parsed.report };
 };
 
-const listQuestionIndexes = async (state: RunState): Promise<ReadonlyArray<number>> => {
+const listQuestionIndexes = async (artifactStore: ArtifactStore): Promise<ReadonlyArray<number>> => {
   try {
-    const entries = await readdir(runArtifactPath(state, questionsPath), { withFileTypes: true });
-
-    return entries
-      .filter((entry) => entry.isFile())
-      .map(({ name }) => name.match(/^(\d+)\.json$/)?.[1])
+    return (await artifactStore.listFiles(questionsPath))
+      .map((name) => name.match(/^(\d+)\.json$/)?.[1])
       .filter((index): index is string => index !== undefined)
       .map((index) => Number.parseInt(index, 10));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
 };
@@ -327,7 +318,7 @@ export class RunController {
   async answerUserQuestion(role: Role, question: string): Promise<string> {
     const answer = await this.deps.ui.askQuestion(role, question);
     const state = await this.deps.artifactStore.loadState();
-    const nextIndex = Math.max(0, ...await listQuestionIndexes(state)) + 1;
+    const nextIndex = Math.max(0, ...await listQuestionIndexes(this.deps.artifactStore)) + 1;
 
     await this.deps.artifactStore.writeJson(questionArtifactPath(nextIndex), { role, question, answer });
 
@@ -337,7 +328,7 @@ export class RunController {
   private async startPlanning(state: RunState): Promise<RunState> {
     const plannerOutput = await this.deps.roleAgent.prompt(
       "planner",
-      buildRoleHandoff("planner", { specification: await readFile(runArtifactPath(state, "specification.md"), "utf8") }),
+      buildRoleHandoff("planner", { specification: await this.deps.artifactStore.readText("specification.md") }),
     );
     const { definitions, chunks } = parsePlan(plannerOutput);
 
@@ -370,10 +361,10 @@ export class RunController {
   }
 
   private async finishDevelopment(state: RunState): Promise<RunState> {
-    const specification = await readFile(runArtifactPath(state, "specification.md"), "utf8");
-    const plan = await readFile(runArtifactPath(state, "plan.md"), "utf8");
+    const specification = await this.deps.artifactStore.readText("specification.md");
+    const plan = await this.deps.artifactStore.readText("plan.md");
     const chunkId = activeChunkId(state);
-    const chunk = await readFile(runArtifactPath(state, chunkDefinitionPath(chunkId)), "utf8");
+    const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
     const developerOutput = await this.deps.roleAgent.prompt(
       "developer",
       buildRoleHandoff("developer", { specification, plan, chunk }),
@@ -397,11 +388,11 @@ export class RunController {
   }
 
   private async finishReview(state: RunState): Promise<RunState> {
-    const specification = await readFile(runArtifactPath(state, "specification.md"), "utf8");
-    const plan = await readFile(runArtifactPath(state, "plan.md"), "utf8");
+    const specification = await this.deps.artifactStore.readText("specification.md");
+    const plan = await this.deps.artifactStore.readText("plan.md");
     const chunkId = activeChunkId(state);
-    const chunk = await readFile(runArtifactPath(state, chunkDefinitionPath(chunkId)), "utf8");
-    const review = await readFile(runArtifactPath(state, implementationReportPath(chunkId)), "utf8");
+    const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
+    const review = await this.deps.artifactStore.readText(implementationReportPath(chunkId));
     const reviewerOutput = await this.deps.roleAgent.prompt(
       "reviewer",
       buildRoleHandoff("reviewer", { specification, plan, chunk, review }),

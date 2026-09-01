@@ -150,7 +150,7 @@ describe("main", () => {
           start: async () => {
             const state = await artifactStore.loadState();
             stateWorkspace = state.workspace;
-            await expect(readFile(policyPath(preparedWorkspace, "run-1"), "utf8")).resolves.toBe(JSON.stringify(policy));
+            await expect(readFile(policyPath(workspace, "run-1"), "utf8")).resolves.toBe(JSON.stringify(policy));
             return state;
           },
           resume: async () => createRunState("run-1", preparedWorkspace),
@@ -161,6 +161,9 @@ describe("main", () => {
       expect(mode).toBe("git");
       expect(stateWorkspace).toBe(preparedWorkspace);
       expect(roleWorkspaces).toEqual([preparedWorkspace]);
+
+      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(0);
+      expect(roleWorkspaces).toEqual([preparedWorkspace, preparedWorkspace]);
     });
   });
 
@@ -179,9 +182,17 @@ describe("main", () => {
       const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));
       await store.writeJson("policy.json", persistedPolicy);
       const createdPolicies: Policy[] = [];
+      const roleWorkspaces: string[] = [];
       const dependencies = createDependencies(workspace, {
         presetStore: {
           list: async () => ({ default: defaultPolicy }),
+        },
+        createRoleAgent: (_policy, _runId, runWorkspace) => {
+          roleWorkspaces.push(runWorkspace);
+          return {
+            async prompt(): Promise<string> { return ""; },
+            async close(): Promise<void> { return; },
+          };
         },
         createRunController: ({ policy }) => {
           createdPolicies.push(policy);
@@ -194,7 +205,8 @@ describe("main", () => {
 
       await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(0);
       expect(createdPolicies).toEqual([persistedPolicy]);
-      expect(dependencies.roleAgent.closed()).toBe(1);
+      expect(roleWorkspaces).toEqual([workspace]);
+      expect(dependencies.roleAgent.closed()).toBe(0);
     });
   });
 
