@@ -294,6 +294,16 @@ describe("main", () => {
     });
   });
 
+  it("returns 1 when model catalog loading fails", async () => {
+    await withTempDir(async (workspace) => {
+      const dependencies = createDependencies(workspace, {
+        loadAvailableModels: async () => { throw new Error("catalog unavailable"); },
+      });
+
+      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(1);
+    });
+  });
+
   it("validates the model catalog before preparing the workspace", async () => {
     await withTempDir(async (workspace) => {
       let prepareCalls = 0;
