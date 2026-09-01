@@ -223,17 +223,28 @@ const parseCliCommand = (argv: readonly string[]): Command => {
   }
 };
 
+const validateInput = async <T>(operation: () => Promise<T> | T): Promise<T> => {
+  try {
+    return await operation();
+  } catch (error) {
+    throw invalid(error instanceof Error ? error.message : String(error));
+  }
+};
+
 const startRun = async (
   command: Extract<Command, { type: "start" }>,
   dependencies: MainDependencies,
 ): Promise<number> => {
   const io = dependencies.createTerminalIo();
   const ui = new TerminalRunUi(io);
-  const presets = await dependencies.presetStore.list(command.workspace);
-  const { policy } = await selectPolicy(io, narrowPreset(presets, command.preset));
-  const validatedPolicy = validatePolicy(policy);
+  const presets = await validateInput(() => dependencies.presetStore.list(command.workspace));
+  const { policy } = await validateInput(() => selectPolicy(io, narrowPreset(presets, command.preset)));
+  const validatedPolicy = await validateInput(() => validatePolicy(policy));
 
-  validateModels(validatedPolicy, await dependencies.loadAvailableModels(validatedPolicy.roles.architect.model));
+  await validateInput(async () => validateModels(
+    validatedPolicy,
+    await dependencies.loadAvailableModels(validatedPolicy.roles.architect.model),
+  ));
 
   const runId = dependencies.randomUUID();
   dependencies.workspaceManager.setMode?.(validatedPolicy.checkpointMode);
@@ -254,10 +265,10 @@ const resumeRun = async (
   command: Extract<Command, { type: "resume" }>,
   dependencies: MainDependencies,
 ): Promise<number> => {
-  const artifactStore = await ArtifactStore.open(command.workspace, command.runId);
+  const artifactStore = await validateInput(() => ArtifactStore.open(command.workspace, command.runId));
   const policy = await loadPersistedPolicy(command.workspace, command.runId);
-  validateModels(policy, await dependencies.loadAvailableModels(policy.roles.architect.model));
-  const state = await artifactStore.loadState();
+  await validateInput(async () => validateModels(policy, await dependencies.loadAvailableModels(policy.roles.architect.model)));
+  const state = await validateInput(() => artifactStore.loadState());
   const roleAgent = dependencies.createRoleAgent(policy, command.runId, command.workspace, state.workspace);
   const ui = new TerminalRunUi(dependencies.createTerminalIo());
 

@@ -242,7 +242,7 @@ describe("main", () => {
         },
       });
 
-      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(2);
       expect(agents).toBe(0);
     });
   });
@@ -314,7 +314,7 @@ describe("main", () => {
         },
       });
 
-      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(2);
       expect(prepareCalls).toBe(0);
       expect(errors.join("")).toMatch(/unavailable models/i);
     });
