@@ -241,10 +241,8 @@ const startRun = async (
   const { policy } = await validateInput(() => selectPolicy(io, narrowPreset(presets, command.preset)));
   const validatedPolicy = await validateInput(() => validatePolicy(policy));
 
-  await validateInput(async () => validateModels(
-    validatedPolicy,
-    await dependencies.loadAvailableModels(validatedPolicy.roles.architect.model),
-  ));
+  const catalog = await dependencies.loadAvailableModels(validatedPolicy.roles.architect.model);
+  await validateInput(() => validateModels(validatedPolicy, catalog));
 
   const runId = dependencies.randomUUID();
   dependencies.workspaceManager.setMode?.(validatedPolicy.checkpointMode);
@@ -267,7 +265,8 @@ const resumeRun = async (
 ): Promise<number> => {
   const artifactStore = await validateInput(() => ArtifactStore.open(command.workspace, command.runId));
   const policy = await loadPersistedPolicy(command.workspace, command.runId);
-  await validateInput(async () => validateModels(policy, await dependencies.loadAvailableModels(policy.roles.architect.model)));
+  const catalog = await dependencies.loadAvailableModels(policy.roles.architect.model);
+  await validateInput(() => validateModels(policy, catalog));
   const state = await validateInput(() => artifactStore.loadState());
   const roleAgent = dependencies.createRoleAgent(policy, command.runId, command.workspace, state.workspace);
   const ui = new TerminalRunUi(dependencies.createTerminalIo());
