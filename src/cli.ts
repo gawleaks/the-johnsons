@@ -238,7 +238,7 @@ const startRun = async (
   const runId = dependencies.randomUUID();
   dependencies.workspaceManager.setMode?.(validatedPolicy.checkpointMode);
   const preparedWorkspace = await dependencies.workspaceManager.prepare(command.workspace, runId);
-  const artifactStore = await ArtifactStore.create(preparedWorkspace, runId, createRunState(runId, preparedWorkspace));
+  const artifactStore = await ArtifactStore.create(command.workspace, runId, createRunState(runId, preparedWorkspace));
   await artifactStore.writeJson("policy.json", validatedPolicy);
   const roleAgent = dependencies.createRoleAgent(validatedPolicy, runId, preparedWorkspace);
 
@@ -256,7 +256,8 @@ const resumeRun = async (
 ): Promise<number> => {
   const artifactStore = await ArtifactStore.open(command.workspace, command.runId);
   const policy = await loadPersistedPolicy(command.workspace, command.runId);
-  const roleAgent = dependencies.createRoleAgent(policy, command.runId, command.workspace);
+  const state = await artifactStore.loadState();
+  const roleAgent = dependencies.createRoleAgent(policy, command.runId, state.workspace);
   const ui = new TerminalRunUi(dependencies.createTerminalIo());
 
   try {

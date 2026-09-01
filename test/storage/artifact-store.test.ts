@@ -80,11 +80,14 @@ describe("ArtifactStore", () => {
     });
   });
 
-  it("rejects initial run identity mismatches", async () => {
+  it("stores artifacts separately from the execution workspace", async () => {
     await withTempDir(async (workspace) => {
-      const initial = createRunState("run-1", `${workspace}/other`);
+      const initial = createRunState("run-1", `${workspace}/worktree`);
+      const store = await ArtifactStore.create(workspace, "run-1", initial);
 
-      await expect(ArtifactStore.create(workspace, "run-1", initial)).rejects.toThrow();
+      await store.writeText("specification.md", "spec");
+      await expect(store.loadState()).resolves.toEqual(initial);
+      await expect(store.readText("specification.md")).resolves.toBe("spec");
     });
   });
 
