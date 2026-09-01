@@ -142,6 +142,10 @@ export class ArtifactStore {
     return store;
   }
 
+  static async open(workspace: string, runId: string): Promise<ArtifactStore> {
+    return new ArtifactStore(workspace, safeRunId(runId));
+  }
+
   async writeText(name: string, content: string): Promise<void> {
     await atomicWrite(artifactPath(this.workspace, this.runId, name), content);
   }
