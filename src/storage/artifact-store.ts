@@ -171,6 +171,7 @@ export class ArtifactStore {
   }
 
   async appendTransition(transition: Transition, next: RunState): Promise<void> {
+    validateLoadedState(this.workspace, this.runId, next);
     await appendJsonLine(artifactPath(this.workspace, this.runId, transitionsFileName), { transition, next });
     await this.writeJson(stateFileName, next);
   }
