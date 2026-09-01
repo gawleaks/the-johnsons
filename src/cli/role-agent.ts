@@ -58,6 +58,7 @@ export const validateModels = (policy: Policy, modelCatalog: ReadonlyArray<strin
 
 export const createAgentProcessFactory = (
   sessionDir: string,
+  cwd?: string,
   name = "the-johnsons",
   Process: AgentProcessConstructor = PiRpcAgentProcess,
 ): AgentProcessFactory =>
@@ -66,6 +67,7 @@ export const createAgentProcessFactory = (
       sessionDir: join(sessionDir, role),
       name: `${name}-${role}`,
       model: config.model,
+      cwd,
       timeoutMs: config.timeoutMs,
     });
 

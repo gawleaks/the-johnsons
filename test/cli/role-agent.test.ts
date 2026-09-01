@@ -43,7 +43,7 @@ describe("validateModels", () => {
 });
 
 describe("createAgentProcessFactory", () => {
-  it("wires each role to its own session directory and name", () => {
+  it("wires each role to its own session directory and optional cwd", () => {
     const created: PiRpcAgentProcessOptions[] = [];
     class FakeProcess implements AgentProcess {
       constructor(options: PiRpcAgentProcessOptions) {
@@ -56,23 +56,30 @@ describe("createAgentProcessFactory", () => {
       async close(): Promise<void> { return undefined; }
     }
 
-    const factory = createAgentProcessFactory("/tmp/session", "johnsons", FakeProcess as unknown as new (options: PiRpcAgentProcessOptions) => AgentProcess);
+    const factory = createAgentProcessFactory(
+      "/tmp/session-root",
+      "/tmp/prepared-workspace",
+      "johnsons",
+      FakeProcess as unknown as new (options: PiRpcAgentProcessOptions) => AgentProcess,
+    );
 
     factory("architect", defaultPolicy.roles.architect);
     factory("reviewer", defaultPolicy.roles.reviewer);
 
     expect(created).toEqual([
       {
-        sessionDir: "/tmp/session/architect",
+        sessionDir: "/tmp/session-root/architect",
         name: "johnsons-architect",
         model: defaultPolicy.roles.architect.model,
         timeoutMs: defaultPolicy.roles.architect.timeoutMs,
+        cwd: "/tmp/prepared-workspace",
       },
       {
-        sessionDir: "/tmp/session/reviewer",
+        sessionDir: "/tmp/session-root/reviewer",
         name: "johnsons-reviewer",
         model: defaultPolicy.roles.reviewer.model,
         timeoutMs: defaultPolicy.roles.reviewer.timeoutMs,
+        cwd: "/tmp/prepared-workspace",
       },
     ]);
   });

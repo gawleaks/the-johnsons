@@ -104,12 +104,12 @@ describe("main", () => {
     });
   });
 
-  it("stores the prepared git workspace in run state and artifacts", async () => {
+  it("uses root-owned artifacts with prepared git cwd for start and resume", async () => {
     await withTempDir(async (workspace) => {
       const preparedWorkspace = join(workspace, "git-worktree");
       let mode: Policy["checkpointMode"] | undefined;
       let stateWorkspace: string | undefined;
-      const roleWorkspaces: string[] = [];
+      const roleCalls: Array<{ workspace: string; executionWorkspace: string }> = [];
       const gitPolicy: Policy = { ...defaultPolicy, checkpointMode: "git" };
 
       const dependencies = createDependencies(workspace, {
@@ -134,8 +134,8 @@ describe("main", () => {
           },
           prepare: async () => preparedWorkspace,
         },
-        createRoleAgent: (_policy, _runId, runWorkspace) => {
-          roleWorkspaces.push(runWorkspace);
+        createRoleAgent: (_policy, _runId, runWorkspace, executionWorkspace) => {
+          roleCalls.push({ workspace: runWorkspace, executionWorkspace });
 
           return {
             async prompt(): Promise<string> {
@@ -160,10 +160,13 @@ describe("main", () => {
       await expect(main(["start", "--workspace", workspace, "--preset", "git"], dependencies)).resolves.toBe(0);
       expect(mode).toBe("git");
       expect(stateWorkspace).toBe(preparedWorkspace);
-      expect(roleWorkspaces).toEqual([preparedWorkspace]);
+      expect(roleCalls).toEqual([{ workspace, executionWorkspace: preparedWorkspace }]);
 
       await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(0);
-      expect(roleWorkspaces).toEqual([preparedWorkspace, preparedWorkspace]);
+      expect(roleCalls).toEqual([
+        { workspace, executionWorkspace: preparedWorkspace },
+        { workspace, executionWorkspace: preparedWorkspace },
+      ]);
     });
   });
 
@@ -187,8 +190,8 @@ describe("main", () => {
         presetStore: {
           list: async () => ({ default: defaultPolicy }),
         },
-        createRoleAgent: (_policy, _runId, runWorkspace) => {
-          roleWorkspaces.push(runWorkspace);
+        createRoleAgent: (_policy, _runId, runWorkspace, executionWorkspace) => {
+          roleWorkspaces.push(`${runWorkspace} -> ${executionWorkspace}`);
           return {
             async prompt(): Promise<string> { return ""; },
             async close(): Promise<void> { return; },
@@ -205,7 +208,7 @@ describe("main", () => {
 
       await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(0);
       expect(createdPolicies).toEqual([persistedPolicy]);
-      expect(roleWorkspaces).toEqual([workspace]);
+      expect(roleWorkspaces).toEqual([`${workspace} -> ${workspace}`]);
       expect(dependencies.roleAgent.closed()).toBe(0);
     });
   });
