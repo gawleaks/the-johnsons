@@ -1,5 +1,5 @@
 import { mkdtemp, rm } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Buffer } from "node:buffer";
@@ -12,6 +12,12 @@ import { JsonlDecoder } from "../rpc/jsonl.js";
 
 export type AgentProcessFactory = (role: Role, config: RoleConfig) => AgentProcess;
 export type ModelCatalogLoader = () => Promise<ReadonlyArray<string>>;
+type AgentProcessConstructor = new (options: ConstructorParameters<typeof PiRpcAgentProcess>[0]) => AgentProcess;
+type ModelCatalogDependencies = {
+  readonly mkdtemp: (prefix: string) => Promise<string>;
+  readonly rm: (path: string, options: { readonly recursive: boolean; readonly force: boolean }) => Promise<void>;
+  readonly spawn: (...args: any[]) => ChildProcessWithoutNullStreams;
+};
 
 const roles = ["architect", "planner", "developer", "reviewer"] as const;
 
@@ -50,20 +56,27 @@ export const validateModels = (policy: Policy, modelCatalog: ReadonlyArray<strin
   }
 };
 
-export const createAgentProcessFactory = (sessionDir: string, name = "the-johnsons"): AgentProcessFactory =>
+export const createAgentProcessFactory = (
+  sessionDir: string,
+  name = "the-johnsons",
+  Process: AgentProcessConstructor = PiRpcAgentProcess,
+): AgentProcessFactory =>
   (role, config) =>
-    new PiRpcAgentProcess({
+    new Process({
       sessionDir: join(sessionDir, role),
       name: `${name}-${role}`,
       model: config.model,
       timeoutMs: config.timeoutMs,
     });
 
+const defaultModelCatalogDependencies: ModelCatalogDependencies = { mkdtemp, rm, spawn };
+
 export const loadAvailableModels = async (
   model = defaultPolicy.roles.architect.model,
+  dependencies = defaultModelCatalogDependencies,
 ): Promise<ReadonlyArray<string>> => {
-  const sessionDir = await mkdtemp(join(tmpdir(), "the-johnsons-models-"));
-  const child = spawn(
+  const sessionDir = await dependencies.mkdtemp(join(tmpdir(), "the-johnsons-models-"));
+  const child = dependencies.spawn(
     "pi",
     ["--mode", "rpc", "--session-dir", sessionDir, "--name", "model-catalog", "--model", model],
     { stdio: ["pipe", "pipe", "pipe"] },
@@ -108,8 +121,8 @@ export const loadAvailableModels = async (
       const onError = (error: Error): void => {
         finish(error);
       };
-      const onExit = (code: number | null): void => {
-        finish(new Error(stderr || `Pi RPC exited before returning model catalog (${code ?? 0})`));
+      const onExit = (): void => {
+        finish(new Error("Failed to load model catalog"));
       };
 
       child.stdout.on("data", onStdout);
@@ -122,7 +135,7 @@ export const loadAvailableModels = async (
     return models;
   } finally {
     child.kill("SIGTERM");
-    await rm(sessionDir, { recursive: true, force: true });
+    await dependencies.rm(sessionDir, { recursive: true, force: true });
   }
 };
 

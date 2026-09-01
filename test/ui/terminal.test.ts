@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { defaultPolicy, type Policy } from "../../src/policy/config.js";
 import {
   TerminalRunUi,
+  createTerminalIo,
   selectPolicy,
   type TerminalIo,
 } from "../../src/ui/terminal.js";
@@ -39,6 +40,39 @@ describe("TerminalRunUi", () => {
   });
 });
 
+describe("createTerminalIo", () => {
+  it("retries choose only for invalid input", async () => {
+    const answers = ["3", "b"];
+    const lines: string[] = [];
+    const io = createTerminalIo({
+      question: async () => answers.shift() ?? "",
+      write: (line) => {
+        lines.push(line);
+      },
+    });
+
+    await expect(io.choose("Pick one", ["a", "b"])).resolves.toBe("b");
+    expect(lines.filter((line) => line === "Choose one of: a, b")).toHaveLength(1);
+  });
+
+  it.each([
+    ["y", true],
+    ["yes", true],
+    ["Y", true],
+    ["YES", true],
+    ["n", false],
+    ["true", false],
+    ["", false],
+  ])("treats %j as %j for confirm", async (answer, expected) => {
+    const io = createTerminalIo({
+      question: async () => answer,
+      write: () => undefined,
+    });
+
+    await expect(io.confirm("Confirm", "Message")).resolves.toBe(expected);
+  });
+});
+
 describe("selectPolicy", () => {
   it("returns the chosen preset and writes role assignments before confirmation", async () => {
     const io = createIo();
@@ -73,5 +107,52 @@ describe("selectPolicy", () => {
         },
       },
     });
+  });
+
+  it("rejects an invalid thinking override", async () => {
+    const prompts = ["", "ultra"];
+    const io = createIo({
+      ask: async () => prompts.shift() ?? "",
+    });
+
+    await expect(selectPolicy(io, { default: defaultPolicy })).rejects.toThrow(/invalid thinking level/i);
+  });
+
+  it("rejects when no preset is selected", async () => {
+    const io = createIo({ choose: async () => undefined });
+
+    await expect(selectPolicy(io, { default: defaultPolicy })).rejects.toThrow(/no preset selected/i);
+  });
+
+  it("re-prompts all role overrides after confirmation declines", async () => {
+    const prompts = [
+      "moonshot/kimi-k2.8", "medium", "", "", "", "", "", "",
+      "", "", "", "", "", "", "", "",
+    ];
+    let confirmations = 0;
+    const io = createIo({
+      ask: async () => prompts.shift() ?? "",
+      confirm: async () => {
+        confirmations += 1;
+        return confirmations > 1;
+      },
+    });
+
+    await expect(selectPolicy(io, { default: defaultPolicy })).resolves.toEqual({
+      name: "default",
+      policy: {
+        ...defaultPolicy,
+        roles: {
+          ...defaultPolicy.roles,
+          architect: {
+            ...defaultPolicy.roles.architect,
+            model: "moonshot/kimi-k2.8",
+            thinking: "medium",
+          },
+        },
+      },
+    });
+
+    expect(confirmations).toBe(2);
   });
 });
