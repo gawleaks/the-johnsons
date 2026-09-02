@@ -873,6 +873,7 @@ describe("RunController slice 5", () => {
           question: "Need one detail?",
           handoff,
           index: 1,
+          status: "pending" as const,
         },
       };
       const { agent, controller, store } = await createExecutionController(
@@ -920,6 +921,81 @@ describe("RunController slice 5", () => {
       await expect(readFile(questionPath(workspace, "run-1", 1), "utf8")).resolves.toBe(
         JSON.stringify({ role: "developer", question: "Need one detail?", answer: "Use the stored handoff" }),
       );
+    });
+  });
+
+  it("retries an answered developer question after restart without re-asking and clears it only on success", async () => {
+    await withTempDir(async (workspace) => {
+      const handoff = ["# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a"))].join("\n\n---\n\n");
+      const state = {
+        ...executionState("run-1", workspace, "developing"),
+        transitionId: 5,
+        pendingQuestion: {
+          role: "developer" as const,
+          question: "Need one detail?",
+          handoff,
+          index: 1,
+          status: "answered" as const,
+          answer: "Use the stored handoff",
+        },
+      };
+      const { store } = await createExecutionController(
+        workspace,
+        state,
+        {},
+        undefined,
+        createUi({
+          askQuestion: async () => {
+            throw new Error("should not ask again");
+          },
+        }),
+      );
+      await store.writeJson(
+        "questions/0001.json",
+        { role: "developer", question: "Need one detail?", answer: "Use the stored handoff" },
+      );
+      const agentCalls: Array<{ role: Role; handoff: string }> = [];
+      const controller = new RunController({
+        artifactStore: store,
+        policy: defaultPolicy,
+        roleAgent: {
+          prompt: async (role, promptHandoff) => {
+            agentCalls.push({ role, handoff: promptHandoff });
+
+            if (role === "developer") {
+              expect(JSON.parse(await readFile(join(runRoot(workspace, "run-1"), "state.json"), "utf8"))).toMatchObject({
+                phase: "developing",
+                transitionId: 6,
+                pendingQuestion: {
+                  role: "developer",
+                  question: "Need one detail?",
+                  handoff,
+                  index: 1,
+                  status: "answered",
+                  answer: "Use the stored handoff",
+                },
+              });
+
+              return JSON.stringify({ report: "implemented", deviated: false });
+            }
+
+            return reviewerResponse();
+          },
+        },
+        ui: createUi({
+          askQuestion: async () => {
+            throw new Error("should not ask again");
+          },
+        }),
+      });
+
+      await controller.resume();
+
+      await expect(store.loadState()).resolves.toMatchObject({ phase: "completed" });
+      expect(agentCalls).toEqual([
+        { role: "developer", handoff: `${handoff}\n\n---\n\nUse the stored handoff` },
+        { role: "reviewer", handoff: [handoff, "implemented"].join("\n\n---\n\n") },
+      ]);
     });
   });
 

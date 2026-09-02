@@ -90,13 +90,18 @@ const activateNextChunk = (chunks: ReadonlyArray<ChunkState>, activeChunkId: str
 const escalateActiveChunk = (state: RunState): RunState["chunks"] =>
   replaceChunk(state, findActiveChunk(state).id, (chunk) => ({ ...chunk, status: "escalated" }));
 
+const withAnsweredPendingQuestionCleared = (state: RunState, updates: RunStateUpdates): RunStateUpdates =>
+  state.pendingQuestion?.status === "answered"
+    ? { ...updates, pendingQuestion: undefined }
+    : updates;
+
 export function applyTransition(
   state: RunState,
   transition: Transition,
   policy: { maxReviewAttempts: number },
 ): RunState {
   if (transition.type === "specification-created" && state.phase === "architecting") {
-    return nextState(state, { phase: "awaiting-spec-approval" });
+    return nextState(state, withAnsweredPendingQuestionCleared(state, { phase: "awaiting-spec-approval" }));
   }
 
   if (transition.type === "specification-approved" && state.phase === "awaiting-spec-approval") {
@@ -108,17 +113,17 @@ export function applyTransition(
       throw new WorkflowError("Planning requires at least one chunk");
     }
 
-    return nextState(state, {
+    return nextState(state, withAnsweredPendingQuestionCleared(state, {
       phase: "developing",
       activeChunkId: transition.chunks[0]?.id,
       chunks: startChunks(transition.chunks),
-    });
+    }));
   }
 
   if (
     transition.type === "question-asked"
     && ["architecting", "planning", "developing", "reviewing"].includes(state.phase)
-    && state.pendingQuestion === undefined
+    && (state.pendingQuestion === undefined || state.pendingQuestion.status === "answered")
   ) {
     return nextState(state, {
       pendingQuestion: {
@@ -126,35 +131,42 @@ export function applyTransition(
         question: transition.question,
         handoff: transition.handoff,
         index: transition.index,
+        status: "pending",
       },
     });
   }
 
   if (transition.type === "question-answered" && state.pendingQuestion !== undefined) {
-    return nextState(state, { pendingQuestion: undefined });
+    return nextState(state, {
+      pendingQuestion: {
+        ...state.pendingQuestion,
+        status: "answered",
+        answer: transition.answer,
+      },
+    });
   }
 
   if (transition.type === "developer-finished" && state.phase === "developing") {
     const activeChunk = findActiveChunk(state);
 
     if (transition.deviated) {
-      return nextState(state, {
+      return nextState(state, withAnsweredPendingQuestionCleared(state, {
         phase: "escalated",
         chunks: replaceChunk(state, activeChunk.id, (chunk) => ({ ...chunk, status: "escalated" })),
-      });
+      }));
     }
 
-    return nextState(state, {
+    return nextState(state, withAnsweredPendingQuestionCleared(state, {
       phase: "reviewing",
       chunks: replaceChunk(state, activeChunk.id, (chunk) => ({ ...chunk, status: "reviewing" })),
-    });
+    }));
   }
 
   if (transition.type === "reviewed" && state.phase === "reviewing") {
     const activeChunk = findActiveChunk(state);
 
     if (transition.verdict === "escalate") {
-      return nextState(state, { phase: "escalated", chunks: escalateActiveChunk(state) });
+      return nextState(state, withAnsweredPendingQuestionCleared(state, { phase: "escalated", chunks: escalateActiveChunk(state) }));
     }
 
     if (transition.verdict === "rejected") {
@@ -162,33 +174,33 @@ export function applyTransition(
       const phase = attempts >= policy.maxReviewAttempts ? "escalated" : "developing";
       const status = attempts >= policy.maxReviewAttempts ? "escalated" : "developing";
 
-      return nextState(state, {
+      return nextState(state, withAnsweredPendingQuestionCleared(state, {
         phase,
         chunks: replaceChunk(state, activeChunk.id, (chunk) => ({
           ...chunk,
           reviewAttempts: attempts,
           status,
         })),
-      });
+      }));
     }
 
     const approvedChunks = replaceChunk(state, activeChunk.id, (chunk) => ({ ...chunk, status: "approved" }));
     const next = activateNextChunk(approvedChunks, activeChunk.id);
 
-    return nextState(state, next);
+    return nextState(state, withAnsweredPendingQuestionCleared(state, next));
   }
 
   if (transition.type === "user-escalated-resolution" && state.phase === "escalated") {
     if (!transition.resume) {
-      return nextState(state, { phase: "failed", activeChunkId: undefined });
+      return nextState(state, withAnsweredPendingQuestionCleared(state, { phase: "failed", activeChunkId: undefined }));
     }
 
     const activeChunk = findActiveChunk(state);
 
-    return nextState(state, {
+    return nextState(state, withAnsweredPendingQuestionCleared(state, {
       phase: "developing",
       chunks: replaceChunk(state, activeChunk.id, (chunk) => ({ ...chunk, status: "developing" })),
-    });
+    }));
   }
 
   throw new WorkflowError(`Invalid transition ${transition.type} from ${state.phase}`);

@@ -511,6 +511,10 @@ export class RunController {
       throw new Error(`Missing pending question for ${role}`);
     }
 
+    if (pendingQuestion.status === "answered") {
+      return { state, answer: pendingQuestion.answer };
+    }
+
     const answer = (await this.readPendingAnswer(pendingQuestion)) ?? await this.askPendingQuestion(pendingQuestion);
     const next = applyTransition(state, { type: "question-answered", answer }, this.deps.policy);
     await this.deps.artifactStore.appendTransition({ type: "question-answered", answer }, next);

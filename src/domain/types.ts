@@ -40,12 +40,22 @@ export interface ChunkState {
   readonly reviewAttempts: number;
 }
 
-export interface PendingQuestion {
-  readonly role: Role;
-  readonly question: string;
-  readonly handoff: string;
-  readonly index: number;
-}
+export type PendingQuestion =
+  | {
+    readonly role: Role;
+    readonly question: string;
+    readonly handoff: string;
+    readonly index: number;
+    readonly status?: "pending";
+  }
+  | {
+    readonly role: Role;
+    readonly question: string;
+    readonly handoff: string;
+    readonly index: number;
+    readonly status: "answered";
+    readonly answer: string;
+  };
 
 export interface RunState {
   readonly version: 1;
