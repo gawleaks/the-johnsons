@@ -117,16 +117,35 @@ const createController = async (
   };
 };
 
+const createWorkflowController = async (
+  workspace: string,
+  responses: Partial<Record<"architect" | "planner" | "developer" | "reviewer", ReadonlyArray<string>>>,
+  ui = createUi(),
+) => {
+  const runId = "run-1";
+  const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+  const agent = createFakeAgent(responses);
+  const controller = new RunController({
+    artifactStore: store,
+    policy: defaultPolicy,
+    roleAgent: agent,
+    ui,
+  });
+
+  return { agent, controller, store };
+};
+
 const createPlanningController = async (
   workspace: string,
   specification: string,
   plannerResponse: string,
+  responses: Partial<Record<"developer" | "reviewer", ReadonlyArray<string>>> = {},
 ) => {
   const runId = "run-1";
   const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
   await store.writeText("specification.md", specification);
   await store.writeJson("state.json", planningState(runId, workspace));
-  const agent = createFakeAgent({ planner: [plannerResponse] });
+  const agent = createFakeAgent({ planner: [plannerResponse], ...responses });
   const controller = new RunController({
     artifactStore: store,
     policy: defaultPolicy,
@@ -166,24 +185,40 @@ const createExecutionController = async (
 };
 
 describe("RunController slice 1", () => {
-  it("writes the architect specification and reaches planning after approval", async () => {
+  it("runs from architect approval through planning and reviewed execution to completion", async () => {
     await withTempDir(async (workspace) => {
       let approvedSpecification = "";
-      const { agent, controller, store } = await createController(
+      const specification = "# Spec\n";
+      const plannerOutput = planResponse(chunkDefinition("chunk-a"));
+      const { agent, controller, store } = await createWorkflowController(
         workspace,
-        JSON.stringify({ specification: "# Spec\n" }),
-        true,
-        (specification) => {
-          approvedSpecification = specification;
+        {
+          architect: [JSON.stringify({ specification })],
+          planner: [plannerOutput],
+          developer: [JSON.stringify({ report: "implemented", deviated: false })],
+          reviewer: [reviewerResponse()],
         },
+        createUi({
+          approved: true,
+          onApproveSpecification: (value) => {
+            approvedSpecification = value;
+          },
+        }),
       );
 
       await controller.start();
 
-      await expect(store.loadState()).resolves.toMatchObject({ phase: "planning", transitionId: 2 });
-      await expect(readFile(specPath(workspace, "run-1"), "utf8")).resolves.toBe("# Spec\n");
-      expect(approvedSpecification).toBe("# Spec\n");
-      expect(agent.calls).toEqual([{ role: "architect", handoff: expect.any(String) }]);
+      await expect(store.loadState()).resolves.toMatchObject({
+        phase: "completed",
+        transitionId: 5,
+        chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 0 }],
+      });
+      await expect(readFile(specPath(workspace, "run-1"), "utf8")).resolves.toBe(specification);
+      await expect(readFile(planPath(workspace, "run-1"), "utf8")).resolves.toBe(plannerOutput);
+      await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe("implemented");
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe(reviewerResponse());
+      expect(approvedSpecification).toBe(specification);
+      expect(agent.calls.map(({ role }) => role)).toEqual(["architect", "planner", "developer", "reviewer"]);
     });
   });
 
@@ -225,12 +260,12 @@ describe("RunController slice 1", () => {
     });
   });
 
-  it("does not call the planner in slice 1", async () => {
+  it("stops after a rejected architect specification and does not dispatch planner", async () => {
     await withTempDir(async (workspace) => {
       const { agent, controller } = await createController(
         workspace,
         JSON.stringify({ specification: "# Spec\n" }),
-        true,
+        false,
       );
 
       await controller.start();
@@ -241,7 +276,7 @@ describe("RunController slice 1", () => {
 });
 
 describe("RunController slice 2", () => {
-  it("writes the full plan and full chunk definitions, then activates the first chunk", async () => {
+  it("writes the full plan and full chunk definitions before completing the planned chunks", async () => {
     await withTempDir(async (workspace) => {
       const specification = "# Spec\n";
       const plannerResponse = planResponse(
@@ -254,17 +289,29 @@ describe("RunController slice 2", () => {
         workspace,
         specification,
         plannerResponse,
+        {
+          developer: [
+            JSON.stringify({ report: "implemented a", deviated: false }),
+            JSON.stringify({ report: "implemented b", deviated: false }),
+          ],
+          reviewer: [
+            reviewerResponse(),
+            reviewerResponse({
+              summary: "chunk b approved",
+              acceptanceCriteria: [{ id: "AC-2", status: "pass" }],
+            }),
+          ],
+        },
       );
 
       await controller.start();
 
       await expect(store.loadState()).resolves.toMatchObject({
-        phase: "developing",
-        activeChunkId: "chunk-a",
-        transitionId: 3,
+        phase: "completed",
+        transitionId: 7,
         chunks: [
-          { id: "chunk-a", status: "developing", reviewAttempts: 0 },
-          { id: "chunk-b", status: "pending", reviewAttempts: 0 },
+          { id: "chunk-a", status: "approved", reviewAttempts: 0 },
+          { id: "chunk-b", status: "approved", reviewAttempts: 0 },
         ],
       });
       await expect(readFile(planPath(workspace, "run-1"), "utf8")).resolves.toBe(plannerResponse);
@@ -278,7 +325,7 @@ describe("RunController slice 2", () => {
           }),
         ),
       );
-      expect(agent.calls).toEqual([{ role: "planner", handoff: specification }]);
+      expect(agent.calls.map(({ role }) => role)).toEqual(["planner", "developer", "reviewer", "developer", "reviewer"]);
     });
   });
 
@@ -334,11 +381,19 @@ describe("RunController slice 2", () => {
     await withTempDir(async (workspace) => {
       const specification = "# Spec\n\n- one\n";
       const plannerResponse = planResponse(chunkDefinition("chunk-a"));
-      const { agent, controller } = await createPlanningController(workspace, specification, plannerResponse);
+      const { agent, controller } = await createPlanningController(
+        workspace,
+        specification,
+        plannerResponse,
+        {
+          developer: [JSON.stringify({ report: "implemented", deviated: false })],
+          reviewer: [reviewerResponse()],
+        },
+      );
 
       await controller.start();
 
-      expect(agent.calls).toEqual([{ role: "planner", handoff: specification }]);
+      expect(agent.calls[0]).toEqual({ role: "planner", handoff: specification });
     });
   });
 });
@@ -562,30 +617,80 @@ describe("RunController slice 3", () => {
 });
 
 describe("RunController slice 4", () => {
-  it("resumes from planning by dispatching only planner and preserving existing specification", async () => {
+  it("resumes a rejected specification by re-asking approval on the stored spec and completing without re-running architect", async () => {
     await withTempDir(async (workspace) => {
-      const { store } = await createPlanningController(
-        workspace,
-        "# Existing spec\n",
-        planResponse(chunkDefinition("chunk-a")),
-      );
-      const originalSpec = await readFile(specPath(workspace, "run-1"), "utf8");
-      const agent = createFakeAgent({ planner: [planResponse(chunkDefinition("chunk-a"))] });
+      const runId = "run-1";
+      const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+      const specification = "# Existing spec\n";
+      await store.writeText("specification.md", specification);
+      await store.writeJson("state.json", {
+        ...createRunState(runId, workspace),
+        phase: "awaiting-spec-approval",
+        transitionId: 1,
+      });
+      let approvedSpecification = "";
+      const agent = createFakeAgent({
+        planner: [planResponse(chunkDefinition("chunk-a"))],
+        developer: [JSON.stringify({ report: "implemented", deviated: false })],
+        reviewer: [reviewerResponse({ summary: "approved after resume" })],
+      });
       const controller = new RunController({
         artifactStore: store,
         policy: defaultPolicy,
         roleAgent: agent,
-        ui: createUi(),
+        ui: createUi({
+          approved: true,
+          onApproveSpecification: (value) => {
+            approvedSpecification = value;
+          },
+        }),
       });
 
       await controller.resume();
 
       await expect(store.loadState()).resolves.toMatchObject({
-        phase: "developing",
-        activeChunkId: "chunk-a",
+        phase: "completed",
+        transitionId: 5,
+        chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 0 }],
       });
-      await expect(readFile(specPath(workspace, "run-1"), "utf8")).resolves.toBe(originalSpec);
-      expect(agent.calls.map(({ role }) => role)).toEqual(["planner"]);
+      expect(approvedSpecification).toBe(specification);
+      expect(agent.calls.map(({ role }) => role)).toEqual(["planner", "developer", "reviewer"]);
+    });
+  });
+
+  it("keeps awaiting approval when a resumed specification is rejected again", async () => {
+    await withTempDir(async (workspace) => {
+      const runId = "run-1";
+      const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+      const specification = "# Existing spec\n";
+      await store.writeText("specification.md", specification);
+      await store.writeJson("state.json", {
+        ...createRunState(runId, workspace),
+        phase: "awaiting-spec-approval",
+        transitionId: 1,
+      });
+      let approvedSpecification = "";
+      const agent = createFakeAgent({ planner: [planResponse(chunkDefinition("chunk-a"))] });
+      const controller = new RunController({
+        artifactStore: store,
+        policy: defaultPolicy,
+        roleAgent: agent,
+        ui: createUi({
+          approved: false,
+          onApproveSpecification: (value) => {
+            approvedSpecification = value;
+          },
+        }),
+      });
+
+      await controller.resume();
+
+      await expect(store.loadState()).resolves.toMatchObject({
+        phase: "awaiting-spec-approval",
+        transitionId: 1,
+      });
+      expect(approvedSpecification).toBe(specification);
+      expect(agent.calls).toEqual([]);
     });
   });
 
