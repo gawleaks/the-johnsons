@@ -60,11 +60,31 @@ const parsePendingQuestion = (value: unknown): PendingQuestion => {
     throw new Error("Invalid run state");
   }
 
+  if (value.status === "answered") {
+    if (!isString(value.answer) || value.answer.trim() === "") {
+      throw new Error("Invalid run state");
+    }
+
+    return {
+      role: value.role as Role,
+      question: value.question,
+      handoff: value.handoff,
+      index: value.index,
+      status: "answered",
+      answer: value.answer,
+    };
+  }
+
+  if (value.status !== undefined && value.status !== "pending") {
+    throw new Error("Invalid run state");
+  }
+
   return {
     role: value.role as Role,
     question: value.question,
     handoff: value.handoff,
     index: value.index,
+    ...(value.status === "pending" ? { status: "pending" as const } : {}),
   };
 };
 
