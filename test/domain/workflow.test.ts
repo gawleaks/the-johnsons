@@ -24,6 +24,48 @@ const stateReviewingChunk = (): RunState =>
   });
 
 describe("applyTransition", () => {
+  it("stores a pending question without changing the current phase", () => {
+    const state = withState({
+      phase: "developing",
+      activeChunkId: "chunk-1",
+      chunks: [chunk("chunk-1", { status: "developing" })],
+    });
+
+    const next = applyTransition(
+      state,
+      { type: "question-asked", role: "developer", question: "Need detail?", handoff: "# Spec\n\n---\n\nchunk", index: 1 },
+      policy,
+    );
+
+    expect(next.phase).toBe("developing");
+    expect(next.pendingQuestion).toEqual({
+      role: "developer",
+      question: "Need detail?",
+      handoff: "# Spec\n\n---\n\nchunk",
+      index: 1,
+    });
+  });
+
+  it("clears a pending question and returns to the retry state", () => {
+    const state = withState({
+      phase: "developing",
+      activeChunkId: "chunk-1",
+      chunks: [chunk("chunk-1", { status: "developing" })],
+      pendingQuestion: {
+        role: "developer",
+        question: "Need detail?",
+        handoff: "# Spec\n\n---\n\nchunk",
+        index: 1,
+      },
+    });
+
+    const next = applyTransition(state, { type: "question-answered", answer: "Use the small path" }, policy);
+
+    expect(next.phase).toBe("developing");
+    expect(next.pendingQuestion).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(next, "pendingQuestion")).toBe(false);
+  });
+
   it("requires explicit specification approval before planning", () => {
     const state = withState({ phase: "awaiting-spec-approval" });
 

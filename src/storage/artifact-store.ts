@@ -1,7 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { appendJsonLine, atomicWrite, safeRelativePath } from "./files.js";
-import type { ChunkState, RunState, Transition } from "../domain/types.js";
+import type { ChunkState, PendingQuestion, Role, RunState, Transition } from "../domain/types.js";
 
 const stateFileName = "state.json";
 const transitionsFileName = "transitions.jsonl";
@@ -28,6 +28,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isString = (value: unknown): value is string => typeof value === "string";
 const isNumber = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value);
+const validRoles = new Set<Role>(["architect", "planner", "developer", "reviewer"]);
 
 const parseChunk = (value: unknown): ChunkState => {
   if (!isRecord(value)) {
@@ -42,6 +43,28 @@ const parseChunk = (value: unknown): ChunkState => {
     id: value.id,
     status: value.status as ChunkState["status"],
     reviewAttempts: value.reviewAttempts,
+  };
+};
+
+const parsePendingQuestion = (value: unknown): PendingQuestion => {
+  if (
+    !isRecord(value)
+    || !isString(value.role)
+    || !validRoles.has(value.role as Role)
+    || !isString(value.question)
+    || value.question.trim() === ""
+    || !isString(value.handoff)
+    || !isNumber(value.index)
+    || value.index < 1
+  ) {
+    throw new Error("Invalid run state");
+  }
+
+  return {
+    role: value.role as Role,
+    question: value.question,
+    handoff: value.handoff,
+    index: value.index,
   };
 };
 
@@ -62,6 +85,7 @@ const parseState = (value: unknown): RunState => {
   }
 
   const activeChunkId = value.activeChunkId;
+  const pendingQuestion = value.pendingQuestion;
 
   if (activeChunkId !== undefined && !isString(activeChunkId)) {
     throw new Error("Invalid run state");
@@ -74,6 +98,7 @@ const parseState = (value: unknown): RunState => {
     phase: value.phase as RunState["phase"],
     chunks: value.chunks.map(parseChunk),
     ...(activeChunkId === undefined ? {} : { activeChunkId }),
+    ...(pendingQuestion === undefined ? {} : { pendingQuestion: parsePendingQuestion(pendingQuestion) }),
     transitionId: value.transitionId,
   };
 };
@@ -106,6 +131,28 @@ const validateInitialIdentity = (workspace: string, runId: string, initial: RunS
 const validateLoadedState = (workspace: string, runId: string, state: RunState): void => {
   if (state.runId !== runId || !isExecutionWorkspace(workspace, runId, state.workspace)) {
     throw new Error("Invalid run state");
+  }
+
+  if (state.pendingQuestion !== undefined) {
+    if (!["architecting", "planning", "developing", "reviewing"].includes(state.phase)) {
+      throw new Error("Invalid run state");
+    }
+
+    if (state.pendingQuestion.role === "architect" && state.phase !== "architecting") {
+      throw new Error("Invalid run state");
+    }
+
+    if (state.pendingQuestion.role === "planner" && state.phase !== "planning") {
+      throw new Error("Invalid run state");
+    }
+
+    if (state.pendingQuestion.role === "developer" && state.phase !== "developing") {
+      throw new Error("Invalid run state");
+    }
+
+    if (state.pendingQuestion.role === "reviewer" && state.phase !== "reviewing") {
+      throw new Error("Invalid run state");
+    }
   }
 
   const activeChunk = state.chunks.find((chunk) => chunk.id === state.activeChunkId);

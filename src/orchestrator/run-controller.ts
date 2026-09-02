@@ -4,6 +4,7 @@ import type {
   AcceptanceCriterion,
   ChunkDefinition,
   ChunkState,
+  PendingQuestion,
   ReviewVerdict,
   Role,
   RunState,
@@ -170,6 +171,8 @@ const implementationReportPath = (id: string): string => join("chunks", id, "imp
 const reviewArtifactPath = (id: string, attempt: number): string => join("chunks", id, `review-${attempt}.md`);
 const questionsPath = "questions";
 const questionArtifactPath = (index: number): string => join(questionsPath, `${index.toString().padStart(4, "0")}.json`);
+const appendAnswerToHandoff = (handoff: string, answer: string): string =>
+  handoff === "" ? answer : [handoff, answer].join("\n\n---\n\n");
 
 const parseRoleQuestion = (output: string): string | undefined => {
   let parsed: unknown;
@@ -416,16 +419,17 @@ export class RunController {
     const state = await this.deps.artifactStore.loadState();
 
     if (state.phase === "architecting") {
-      const specification = await this.promptRoleWithQuestionRetry(
+      const specificationResult = await this.promptRoleWithQuestionRetry(
+        state,
         "architect",
         {},
         parseSpecification,
       );
 
-      await this.deps.artifactStore.writeText("specification.md", specification);
+      await this.deps.artifactStore.writeText("specification.md", specificationResult.value);
 
       const afterSpecification = applyTransition(
-        state,
+        specificationResult.state,
         { type: "specification-created" },
         this.deps.policy,
       );
@@ -434,7 +438,7 @@ export class RunController {
         afterSpecification,
       );
 
-      return this.requestSpecificationApproval(afterSpecification, specification);
+      return this.requestSpecificationApproval(afterSpecification, specificationResult.value);
     }
 
     if (state.phase === "awaiting-spec-approval") {
@@ -446,6 +450,10 @@ export class RunController {
 
   async resume(): Promise<RunState> {
     const state = await this.deps.artifactStore.loadState();
+
+    if (state.phase === "architecting") {
+      return this.start();
+    }
 
     if (state.phase === "awaiting-spec-approval") {
       return this.requestSpecificationApproval(state);
@@ -469,29 +477,86 @@ export class RunController {
     return answer;
   }
 
+  private async readPendingAnswer(pendingQuestion: PendingQuestion): Promise<string | undefined> {
+    try {
+      const artifact = JSON.parse(await this.deps.artifactStore.readText(questionArtifactPath(pendingQuestion.index))) as {
+        answer?: unknown;
+      };
+
+      return isNonEmptyString(artifact.answer) ? artifact.answer : undefined;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return undefined;
+      }
+
+      throw error;
+    }
+  }
+
+  private async askPendingQuestion(pendingQuestion: PendingQuestion): Promise<string> {
+    const answer = await this.deps.ui.askQuestion(pendingQuestion.role, pendingQuestion.question);
+    await this.deps.artifactStore.writeJson(questionArtifactPath(pendingQuestion.index), {
+      role: pendingQuestion.role,
+      question: pendingQuestion.question,
+      answer,
+    });
+
+    return answer;
+  }
+
+  private async resolvePendingQuestion(state: RunState, role: Role): Promise<{ state: RunState; answer: string }> {
+    const pendingQuestion = state.pendingQuestion;
+
+    if (pendingQuestion === undefined || pendingQuestion.role !== role) {
+      throw new Error(`Missing pending question for ${role}`);
+    }
+
+    const answer = (await this.readPendingAnswer(pendingQuestion)) ?? await this.askPendingQuestion(pendingQuestion);
+    const next = applyTransition(state, { type: "question-answered", answer }, this.deps.policy);
+    await this.deps.artifactStore.appendTransition({ type: "question-answered", answer }, next);
+
+    return { state: next, answer };
+  }
+
   private async promptRoleWithQuestionRetry<T>(
+    state: RunState,
     role: Role,
     artifacts: RoleHandoffArtifacts,
     parseOutput: (output: string) => T,
-  ): Promise<T> {
-    let answer: string | undefined;
+  ): Promise<{ state: RunState; value: T }> {
+    let currentState = state;
+    let nextHandoff = buildRoleHandoff(role, artifacts);
+
+    if (currentState.pendingQuestion !== undefined) {
+      const { handoff } = currentState.pendingQuestion;
+      const resumed = await this.resolvePendingQuestion(currentState, role);
+      currentState = resumed.state;
+      nextHandoff = appendAnswerToHandoff(handoff, resumed.answer);
+    }
 
     while (true) {
-      const output = await this.deps.roleAgent.prompt(
-        role,
-        buildRoleHandoff(
-          role,
-          answer === undefined ? artifacts : { ...artifacts, answer },
-        ),
-      );
+      const output = await this.deps.roleAgent.prompt(role, nextHandoff);
       const question = parseRoleQuestion(output);
 
       if (question !== undefined) {
-        answer = await this.answerUserQuestion(role, question);
+        const nextIndex = Math.max(0, ...await listQuestionIndexes(this.deps.artifactStore)) + 1;
+        await this.deps.artifactStore.writeJson(questionArtifactPath(nextIndex), { role, question });
+        const waiting = applyTransition(
+          currentState,
+          { type: "question-asked", role, question, handoff: nextHandoff, index: nextIndex },
+          this.deps.policy,
+        );
+        await this.deps.artifactStore.appendTransition(
+          { type: "question-asked", role, question, handoff: nextHandoff, index: nextIndex },
+          waiting,
+        );
+        const resumed = await this.resolvePendingQuestion(waiting, role);
+        currentState = resumed.state;
+        nextHandoff = appendAnswerToHandoff(waiting.pendingQuestion?.handoff ?? nextHandoff, resumed.answer);
         continue;
       }
 
-      return parseOutput(output);
+      return { state: currentState, value: parseOutput(output) };
     }
   }
 
@@ -520,14 +585,15 @@ export class RunController {
 
   private async startPlanning(state: RunState): Promise<RunState> {
     const specification = await this.deps.artifactStore.readText("specification.md");
-    const plannerOutput = await this.promptRoleWithQuestionRetry(
+    const plannerResult = await this.promptRoleWithQuestionRetry(
+      state,
       "planner",
       { specification },
       (output) => output,
     );
-    const { definitions, chunks } = parsePlan(plannerOutput);
+    const { definitions, chunks } = parsePlan(plannerResult.value);
 
-    await this.deps.artifactStore.writeText("plan.md", plannerOutput);
+    await this.deps.artifactStore.writeText("plan.md", plannerResult.value);
     await Promise.all(
       definitions.map(async (definition) =>
         this.deps.artifactStore.writeText(
@@ -537,7 +603,7 @@ export class RunController {
       ),
     );
 
-    const next = applyTransition(state, { type: "plan-created", chunks }, this.deps.policy);
+    const next = applyTransition(plannerResult.state, { type: "plan-created", chunks }, this.deps.policy);
     await this.deps.artifactStore.appendTransition({ type: "plan-created", chunks }, next);
 
     return next;
@@ -574,15 +640,17 @@ export class RunController {
     const plan = await this.deps.artifactStore.readText("plan.md");
     const chunkId = activeChunkId(state);
     const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
-    const { report, deviated } = await this.promptRoleWithQuestionRetry(
+    const developmentResult = await this.promptRoleWithQuestionRetry(
+      state,
       "developer",
       { specification, plan, chunk },
       parseDeveloperOutput,
     );
+    const { report, deviated } = developmentResult.value;
 
     await this.deps.artifactStore.writeText(implementationReportPath(chunkId), report);
 
-    const next = applyTransition(state, { type: "developer-finished", deviated }, this.deps.policy);
+    const next = applyTransition(developmentResult.state, { type: "developer-finished", deviated }, this.deps.policy);
     await this.deps.artifactStore.appendTransition({ type: "developer-finished", deviated }, next);
 
     return next;
@@ -602,11 +670,13 @@ export class RunController {
     const chunkId = activeChunkId(state);
     const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
     const review = await this.deps.artifactStore.readText(implementationReportPath(chunkId));
-    const { verdict, report } = await this.promptRoleWithQuestionRetry(
+    const reviewResult = await this.promptRoleWithQuestionRetry(
+      state,
       "reviewer",
       { specification, plan, chunk, review },
       (output) => parseReviewerOutput(output, parseChunkDefinition(JSON.parse(chunk))),
     );
+    const { verdict, report } = reviewResult.value;
     const attempt = state.chunks.find(({ id }) => id === chunkId)?.reviewAttempts;
 
     if (attempt === undefined) {
@@ -615,7 +685,7 @@ export class RunController {
 
     await this.deps.artifactStore.writeText(reviewArtifactPath(chunkId, attempt + 1), report);
 
-    const next = applyTransition(state, { type: "reviewed", verdict }, this.deps.policy);
+    const next = applyTransition(reviewResult.state, { type: "reviewed", verdict }, this.deps.policy);
     await this.deps.artifactStore.appendTransition({ type: "reviewed", verdict }, next);
 
     return next;

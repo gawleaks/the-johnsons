@@ -1,4 +1,4 @@
-import type { ChunkState, RunState, Transition } from "./types.js";
+import type { ChunkState, PendingQuestion, RunState, Transition } from "./types.js";
 
 export class WorkflowError extends Error {
   constructor(message: string) {
@@ -10,44 +10,42 @@ export class WorkflowError extends Error {
 const freezeChunks = (chunks: ReadonlyArray<ChunkState>): ReadonlyArray<ChunkState> =>
   Object.freeze(chunks.map((chunk) => Object.freeze({ ...chunk })));
 
-const freezeState = (state: RunState): RunState =>
-  Object.freeze({
+const freezePendingQuestion = (pendingQuestion: PendingQuestion): PendingQuestion =>
+  Object.freeze({ ...pendingQuestion });
+
+const freezeState = (state: RunState): RunState => {
+  const next = {
     ...state,
     chunks: freezeChunks(state.chunks),
-  });
+  } as RunState & { pendingQuestion?: PendingQuestion };
 
-type RunStateUpdates = Omit<Partial<RunState>, "activeChunkId"> & {
+  if (state.pendingQuestion !== undefined) {
+    next.pendingQuestion = freezePendingQuestion(state.pendingQuestion);
+  }
+
+  return Object.freeze(next);
+};
+
+type RunStateUpdates = Omit<Partial<RunState>, "activeChunkId" | "pendingQuestion"> & {
   readonly activeChunkId?: RunState["activeChunkId"] | undefined;
+  readonly pendingQuestion?: RunState["pendingQuestion"] | undefined;
 };
 
 const nextState = (state: RunState, updates: RunStateUpdates): RunState => {
-  const { activeChunkId, ...restUpdates } = updates;
-  const hasActiveChunkIdUpdate = Object.prototype.hasOwnProperty.call(updates, "activeChunkId");
+  const next = { ...state, ...updates, transitionId: state.transitionId + 1 } as RunState & {
+    activeChunkId?: RunState["activeChunkId"];
+    pendingQuestion?: RunState["pendingQuestion"];
+  };
 
-  if (!hasActiveChunkIdUpdate) {
-    return freezeState({
-      ...state,
-      ...restUpdates,
-      transitionId: state.transitionId + 1,
-    });
+  if (Object.prototype.hasOwnProperty.call(updates, "activeChunkId") && updates.activeChunkId === undefined) {
+    delete next.activeChunkId;
   }
 
-  if (activeChunkId === undefined) {
-    const { activeChunkId: _currentActiveChunkId, ...stateWithoutActiveChunkId } = state;
-
-    return freezeState({
-      ...stateWithoutActiveChunkId,
-      ...restUpdates,
-      transitionId: state.transitionId + 1,
-    });
+  if (Object.prototype.hasOwnProperty.call(updates, "pendingQuestion") && updates.pendingQuestion === undefined) {
+    delete next.pendingQuestion;
   }
 
-  return freezeState({
-    ...state,
-    ...restUpdates,
-    activeChunkId,
-    transitionId: state.transitionId + 1,
-  });
+  return freezeState(next);
 };
 
 const findActiveChunk = (state: RunState): ChunkState => {
@@ -115,6 +113,25 @@ export function applyTransition(
       activeChunkId: transition.chunks[0]?.id,
       chunks: startChunks(transition.chunks),
     });
+  }
+
+  if (
+    transition.type === "question-asked"
+    && ["architecting", "planning", "developing", "reviewing"].includes(state.phase)
+    && state.pendingQuestion === undefined
+  ) {
+    return nextState(state, {
+      pendingQuestion: {
+        role: transition.role,
+        question: transition.question,
+        handoff: transition.handoff,
+        index: transition.index,
+      },
+    });
+  }
+
+  if (transition.type === "question-answered" && state.pendingQuestion !== undefined) {
+    return nextState(state, { pendingQuestion: undefined });
   }
 
   if (transition.type === "developer-finished" && state.phase === "developing") {
