@@ -965,7 +965,7 @@ describe("RunController slice 5", () => {
             if (role === "developer") {
               expect(JSON.parse(await readFile(join(runRoot(workspace, "run-1"), "state.json"), "utf8"))).toMatchObject({
                 phase: "developing",
-                transitionId: 6,
+                transitionId: 5,
                 pendingQuestion: {
                   role: "developer",
                   question: "Need one detail?",
