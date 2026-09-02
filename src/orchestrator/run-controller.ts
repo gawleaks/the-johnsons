@@ -413,51 +413,28 @@ export class RunController {
         afterSpecification,
       );
 
-      const approved = await this.deps.ui.approveSpecification(specification);
-      if (!approved) {
-        return afterSpecification;
-      }
-
-      const next = applyTransition(
-        afterSpecification,
-        { type: "specification-approved" },
-        this.deps.policy,
-      );
-      await this.deps.artifactStore.appendTransition(
-        { type: "specification-approved" },
-        next,
-      );
-
-      return next;
+      return this.requestSpecificationApproval(afterSpecification, specification);
     }
 
-    if (state.phase === "planning") {
-      return this.startPlanning(state);
+    if (state.phase === "awaiting-spec-approval") {
+      return this.requestSpecificationApproval(state);
     }
 
-    if (state.phase === "developing" || state.phase === "reviewing") {
-      return this.runExecutionLoop(state);
-    }
-
-    return state;
+    return this.advanceWorkflow(state);
   }
 
   async resume(): Promise<RunState> {
     const state = await this.deps.artifactStore.loadState();
 
-    if (state.phase === "planning") {
-      return this.startPlanning(state);
-    }
-
-    if (state.phase === "developing" || state.phase === "reviewing") {
-      return this.runExecutionLoop(state);
+    if (state.phase === "awaiting-spec-approval") {
+      return this.requestSpecificationApproval(state);
     }
 
     if (state.phase === "escalated") {
       return this.resolveEscalation(state);
     }
 
-    return state;
+    return this.advanceWorkflow(state);
   }
 
   async answerUserQuestion(role: Role, question: string): Promise<string> {
@@ -468,6 +445,29 @@ export class RunController {
     await this.deps.artifactStore.writeJson(questionArtifactPath(nextIndex), { role, question, answer });
 
     return answer;
+  }
+
+  private async requestSpecificationApproval(
+    state: RunState,
+    specification?: string,
+  ): Promise<RunState> {
+    const currentSpecification = specification ?? await this.deps.artifactStore.readText("specification.md");
+    const approved = await this.deps.ui.approveSpecification(currentSpecification);
+    if (!approved) {
+      return state;
+    }
+
+    const next = applyTransition(
+      state,
+      { type: "specification-approved" },
+      this.deps.policy,
+    );
+    await this.deps.artifactStore.appendTransition(
+      { type: "specification-approved" },
+      next,
+    );
+
+    return this.advanceWorkflow(next);
   }
 
   private async startPlanning(state: RunState): Promise<RunState> {
@@ -491,6 +491,20 @@ export class RunController {
     await this.deps.artifactStore.appendTransition({ type: "plan-created", chunks }, next);
 
     return next;
+  }
+
+  private async advanceWorkflow(initialState: RunState): Promise<RunState> {
+    let state = initialState;
+
+    while (state.phase === "planning" || state.phase === "developing" || state.phase === "reviewing") {
+      state = state.phase === "planning"
+        ? await this.startPlanning(state)
+        : state.phase === "developing"
+          ? await this.finishDevelopment(state)
+          : await this.finishReview(state);
+    }
+
+    return state;
   }
 
   private async runExecutionLoop(initialState: RunState): Promise<RunState> {
