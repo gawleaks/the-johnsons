@@ -43,10 +43,11 @@ describe("applyTransition", () => {
       question: "Need detail?",
       handoff: "# Spec\n\n---\n\nchunk",
       index: 1,
+      status: "pending",
     });
   });
 
-  it("clears a pending question and returns to the retry state", () => {
+  it("marks a pending question answered without clearing it", () => {
     const state = withState({
       phase: "developing",
       activeChunkId: "chunk-1",
@@ -56,12 +57,41 @@ describe("applyTransition", () => {
         question: "Need detail?",
         handoff: "# Spec\n\n---\n\nchunk",
         index: 1,
+        status: "pending",
       },
     });
 
     const next = applyTransition(state, { type: "question-answered", answer: "Use the small path" }, policy);
 
     expect(next.phase).toBe("developing");
+    expect(next.pendingQuestion).toEqual({
+      role: "developer",
+      question: "Need detail?",
+      handoff: "# Spec\n\n---\n\nchunk",
+      index: 1,
+      status: "answered",
+      answer: "Use the small path",
+    });
+  });
+
+  it("clears an answered pending question in the next successful transition", () => {
+    const state = withState({
+      phase: "developing",
+      activeChunkId: "chunk-1",
+      chunks: [chunk("chunk-1", { status: "developing" })],
+      pendingQuestion: {
+        role: "developer",
+        question: "Need detail?",
+        handoff: "# Spec\n\n---\n\nchunk",
+        index: 1,
+        status: "answered",
+        answer: "Use the small path",
+      },
+    });
+
+    const next = applyTransition(state, { type: "developer-finished", deviated: false }, policy);
+
+    expect(next.phase).toBe("reviewing");
     expect(next.pendingQuestion).toBeUndefined();
     expect(Object.prototype.hasOwnProperty.call(next, "pendingQuestion")).toBe(false);
   });
