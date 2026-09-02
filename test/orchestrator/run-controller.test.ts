@@ -862,6 +862,67 @@ describe("RunController slice 4", () => {
 });
 
 describe("RunController slice 5", () => {
+  it("resumes from a durable pending developer question without dispatching before the answer and retries the same role once", async () => {
+    await withTempDir(async (workspace) => {
+      const handoff = ["# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a"))].join("\n\n---\n\n");
+      const state = {
+        ...executionState("run-1", workspace, "developing"),
+        transitionId: 4,
+        pendingQuestion: {
+          role: "developer" as const,
+          question: "Need one detail?",
+          handoff,
+          index: 1,
+        },
+      };
+      const { agent, controller, store } = await createExecutionController(
+        workspace,
+        state,
+        {
+          developer: [JSON.stringify({ report: "implemented", deviated: false })],
+          reviewer: [reviewerResponse()],
+        },
+        undefined,
+        createUi({
+          askQuestion: async (role, question) => {
+            expect(role).toBe("developer");
+            expect(question).toBe("Need one detail?");
+            expect(agent.calls).toEqual([]);
+            await expect(store.loadState()).resolves.toMatchObject({
+              phase: "developing",
+              transitionId: 4,
+              pendingQuestion: {
+                role: "developer",
+                question: "Need one detail?",
+                handoff,
+                index: 1,
+              },
+            });
+            return "Use the stored handoff";
+          },
+        }),
+      );
+      await store.writeJson(
+        "questions/0001.json",
+        { role: "developer", question: "Need one detail?" },
+      );
+
+      await controller.resume();
+
+      await expect(store.loadState()).resolves.toMatchObject({ phase: "completed" });
+      expect(agent.calls).toEqual([
+        { role: "developer", handoff: `${handoff}\n\n---\n\nUse the stored handoff` },
+        {
+          role: "reviewer",
+          handoff: [handoff, "implemented"].join("\n\n---\n\n"),
+        },
+      ]);
+      await expect(readFile(questionPath(workspace, "run-1", 1), "utf8")).resolves.toBe(
+        JSON.stringify({ role: "developer", question: "Need one detail?", answer: "Use the stored handoff" }),
+      );
+    });
+  });
+
   it.each([
     ["architect", "What scope?", "focus the spec", JSON.stringify({ specification: "# Spec\n" })],
     ["planner", "Which chunks?", "one chunk", planResponse(chunkDefinition("chunk-a"))],

@@ -40,6 +40,13 @@ export interface ChunkState {
   readonly reviewAttempts: number;
 }
 
+export interface PendingQuestion {
+  readonly role: Role;
+  readonly question: string;
+  readonly handoff: string;
+  readonly index: number;
+}
+
 export interface RunState {
   readonly version: 1;
   readonly runId: string;
@@ -47,6 +54,7 @@ export interface RunState {
   readonly phase: RunPhase;
   readonly chunks: ReadonlyArray<ChunkState>;
   readonly activeChunkId?: string;
+  readonly pendingQuestion?: PendingQuestion;
   readonly transitionId: number;
 }
 
@@ -54,6 +62,8 @@ export type Transition =
   | { readonly type: "specification-created" }
   | { readonly type: "specification-approved" }
   | { readonly type: "plan-created"; readonly chunks: ReadonlyArray<ChunkState> }
+  | { readonly type: "question-asked"; readonly role: Role; readonly question: string; readonly handoff: string; readonly index: number }
+  | { readonly type: "question-answered"; readonly answer: string }
   | { readonly type: "developer-finished"; readonly deviated?: boolean }
   | { readonly type: "reviewed"; readonly verdict: ReviewVerdict }
   | { readonly type: "user-escalated-resolution"; readonly resume: boolean };
