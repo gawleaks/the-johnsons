@@ -2,7 +2,7 @@ import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { createRunState, type RunState } from "../../src/domain/types.js";
+import { createRunState, type Role, type RunState } from "../../src/domain/types.js";
 import { ArtifactStore } from "../../src/storage/artifact-store.js";
 import { defaultPolicy } from "../../src/policy/config.js";
 import { RunController } from "../../src/orchestrator/run-controller.js";
@@ -80,6 +80,8 @@ const reviewerResponse = (overrides: Record<string, unknown> = {}) => JSON.strin
   ...overrides,
 });
 
+const roleQuestionResponse = (question: string) => JSON.stringify({ question });
+
 const createUi = (options: {
   approved?: boolean;
   onApproveSpecification?: ((specification: string) => void) | undefined;
@@ -138,19 +140,20 @@ const createWorkflowController = async (
 const createPlanningController = async (
   workspace: string,
   specification: string,
-  plannerResponse: string,
+  plannerResponse: string | ReadonlyArray<string>,
   responses: Partial<Record<"developer" | "reviewer", ReadonlyArray<string>>> = {},
+  ui = createUi(),
 ) => {
   const runId = "run-1";
   const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
   await store.writeText("specification.md", specification);
   await store.writeJson("state.json", planningState(runId, workspace));
-  const agent = createFakeAgent({ planner: [plannerResponse], ...responses });
+  const agent = createFakeAgent({ planner: Array.isArray(plannerResponse) ? plannerResponse : [plannerResponse], ...responses });
   const controller = new RunController({
     artifactStore: store,
     policy: defaultPolicy,
     roleAgent: agent,
-    ui: createUi(),
+    ui,
   });
 
   return { agent, controller, store };
@@ -161,6 +164,7 @@ const createExecutionController = async (
   state: RunState,
   responses: Partial<Record<"developer" | "reviewer", ReadonlyArray<string>>>,
   implementationReport?: string,
+  ui = createUi(),
 ) => {
   const runId = "run-1";
   const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
@@ -178,11 +182,31 @@ const createExecutionController = async (
     artifactStore: store,
     policy: defaultPolicy,
     roleAgent: agent,
-    ui: createUi(),
+    ui,
   });
 
   return { agent, controller, store };
 };
+
+const createQuestionRetryUi = (
+  workspace: string,
+  role: Role,
+  question: string,
+  answer: string,
+  approved = true,
+  onApproveSpecification?: (specification: string) => void,
+) => createUi({
+  approved,
+  onApproveSpecification,
+  askQuestion: async (askedRole, askedQuestion) => {
+    expect(askedRole).toBe(role);
+    expect(askedQuestion).toBe(question);
+    await expect(readFile(questionPath(workspace, "run-1", 1), "utf8")).resolves.toBe(
+      JSON.stringify({ role, question }),
+    );
+    return answer;
+  },
+});
 
 describe("RunController slice 1", () => {
   it("runs from architect approval through planning and reviewed execution to completion", async () => {
@@ -833,6 +857,105 @@ describe("RunController slice 4", () => {
       });
       expect(agent.calls.map(({ role }) => role)).toEqual(["developer", "reviewer"]);
       await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe(reviewerResponse({ summary: "done" }));
+    });
+  });
+});
+
+describe("RunController slice 5", () => {
+  it.each([
+    ["architect", "What scope?", "focus the spec", JSON.stringify({ specification: "# Spec\n" })],
+    ["planner", "Which chunks?", "one chunk", planResponse(chunkDefinition("chunk-a"))],
+    ["developer", "What implementation detail?", "keep it small", JSON.stringify({ report: "implemented", deviated: false })],
+    ["reviewer", "Anything unclear?", "all clear", reviewerResponse()],
+  ] as const)("retries %s questions after durably persisting the pending question", async (role, question, answer, finalResponse) => {
+    await withTempDir(async (workspace) => {
+      const ui = createQuestionRetryUi(workspace, role, question, answer, role === "architect" ? false : true);
+
+      if (role === "architect") {
+        const { agent, controller, store } = await createWorkflowController(
+          workspace,
+          { architect: [roleQuestionResponse(question), finalResponse] },
+          ui,
+        );
+
+        await controller.start();
+
+        await expect(store.loadState()).resolves.toMatchObject({ phase: "awaiting-spec-approval" });
+        expect(agent.calls.map(({ role: callRole }) => callRole)).toEqual(["architect", "architect"]);
+        await expect(readFile(questionPath(workspace, "run-1", 1), "utf8")).resolves.toBe(
+          JSON.stringify({ role, question, answer }),
+        );
+        expect(agent.calls[1]?.handoff).toContain(answer);
+        return;
+      }
+
+      if (role === "planner") {
+        const { agent, controller, store } = await createPlanningController(
+          workspace,
+          "# Spec\n",
+          [roleQuestionResponse(question), finalResponse],
+          {
+            developer: [JSON.stringify({ report: "implemented", deviated: false })],
+            reviewer: [reviewerResponse()],
+          },
+          ui,
+        );
+
+        await controller.start();
+
+        await expect(store.loadState()).resolves.toMatchObject({ phase: "completed" });
+        expect(agent.calls[0]).toMatchObject({ role: "planner" });
+        expect(agent.calls[1]).toMatchObject({ role: "planner" });
+        expect(agent.calls[1]?.handoff).toContain(answer);
+        await expect(readFile(questionPath(workspace, "run-1", 1), "utf8")).resolves.toBe(
+          JSON.stringify({ role, question, answer }),
+        );
+        return;
+      }
+
+      if (role === "developer") {
+        const { agent, controller, store } = await createExecutionController(
+          workspace,
+          executionState("run-1", workspace, "developing"),
+          {
+            developer: [roleQuestionResponse(question), JSON.stringify({ report: "implemented", deviated: false })],
+            reviewer: [reviewerResponse()],
+          },
+          undefined,
+          ui,
+        );
+
+        await controller.start();
+
+        await expect(store.loadState()).resolves.toMatchObject({ phase: "completed" });
+        expect(agent.calls[0]).toMatchObject({ role: "developer" });
+        expect(agent.calls[1]).toMatchObject({ role: "developer" });
+        expect(agent.calls[1]?.handoff).toContain(answer);
+        await expect(readFile(questionPath(workspace, "run-1", 1), "utf8")).resolves.toBe(
+          JSON.stringify({ role, question, answer }),
+        );
+        return;
+      }
+
+      const { agent, controller, store } = await createExecutionController(
+        workspace,
+        executionState("run-1", workspace, "reviewing"),
+        {
+          reviewer: [roleQuestionResponse(question), finalResponse],
+        },
+        "implemented",
+        ui,
+      );
+
+      await controller.start();
+
+      await expect(store.loadState()).resolves.toMatchObject({ phase: "completed" });
+      expect(agent.calls[0]).toMatchObject({ role: "reviewer" });
+      expect(agent.calls[1]).toMatchObject({ role: "reviewer" });
+      expect(agent.calls[1]?.handoff).toContain(answer);
+      await expect(readFile(questionPath(workspace, "run-1", 1), "utf8")).resolves.toBe(
+        JSON.stringify({ role, question, answer }),
+      );
     });
   });
 });

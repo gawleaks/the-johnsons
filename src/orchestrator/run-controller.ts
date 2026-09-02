@@ -9,7 +9,7 @@ import type {
   RunState,
 } from "../domain/types.js";
 import type { Policy } from "../policy/config.js";
-import { buildRoleHandoff } from "../policy/prompts.js";
+import { buildRoleHandoff, type RoleHandoffArtifacts } from "../policy/prompts.js";
 import type { ArtifactStore } from "../storage/artifact-store.js";
 
 export interface RoleAgent {
@@ -170,6 +170,27 @@ const implementationReportPath = (id: string): string => join("chunks", id, "imp
 const reviewArtifactPath = (id: string, attempt: number): string => join("chunks", id, `review-${attempt}.md`);
 const questionsPath = "questions";
 const questionArtifactPath = (index: number): string => join(questionsPath, `${index.toString().padStart(4, "0")}.json`);
+
+const parseRoleQuestion = (output: string): string | undefined => {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return undefined;
+  }
+
+  if (!isRecord(parsed)) {
+    return undefined;
+  }
+
+  const keys = Object.keys(parsed);
+  if (keys.length !== 1 || keys[0] !== "question" || !isNonEmptyString(parsed.question)) {
+    return undefined;
+  }
+
+  return parsed.question;
+};
 
 const activeChunkId = (state: RunState): string => {
   if (!state.activeChunkId) {
@@ -395,11 +416,11 @@ export class RunController {
     const state = await this.deps.artifactStore.loadState();
 
     if (state.phase === "architecting") {
-      const architectOutput = await this.deps.roleAgent.prompt(
+      const specification = await this.promptRoleWithQuestionRetry(
         "architect",
-        buildRoleHandoff("architect", {}),
+        {},
+        parseSpecification,
       );
-      const specification = parseSpecification(architectOutput);
 
       await this.deps.artifactStore.writeText("specification.md", specification);
 
@@ -438,13 +459,40 @@ export class RunController {
   }
 
   async answerUserQuestion(role: Role, question: string): Promise<string> {
-    const answer = await this.deps.ui.askQuestion(role, question);
-    const state = await this.deps.artifactStore.loadState();
     const nextIndex = Math.max(0, ...await listQuestionIndexes(this.deps.artifactStore)) + 1;
+    const questionArtifactPathname = questionArtifactPath(nextIndex);
 
-    await this.deps.artifactStore.writeJson(questionArtifactPath(nextIndex), { role, question, answer });
+    await this.deps.artifactStore.writeJson(questionArtifactPathname, { role, question });
+    const answer = await this.deps.ui.askQuestion(role, question);
+    await this.deps.artifactStore.writeJson(questionArtifactPathname, { role, question, answer });
 
     return answer;
+  }
+
+  private async promptRoleWithQuestionRetry<T>(
+    role: Role,
+    artifacts: RoleHandoffArtifacts,
+    parseOutput: (output: string) => T,
+  ): Promise<T> {
+    let answer: string | undefined;
+
+    while (true) {
+      const output = await this.deps.roleAgent.prompt(
+        role,
+        buildRoleHandoff(
+          role,
+          answer === undefined ? artifacts : { ...artifacts, answer },
+        ),
+      );
+      const question = parseRoleQuestion(output);
+
+      if (question !== undefined) {
+        answer = await this.answerUserQuestion(role, question);
+        continue;
+      }
+
+      return parseOutput(output);
+    }
   }
 
   private async requestSpecificationApproval(
@@ -471,9 +519,11 @@ export class RunController {
   }
 
   private async startPlanning(state: RunState): Promise<RunState> {
-    const plannerOutput = await this.deps.roleAgent.prompt(
+    const specification = await this.deps.artifactStore.readText("specification.md");
+    const plannerOutput = await this.promptRoleWithQuestionRetry(
       "planner",
-      buildRoleHandoff("planner", { specification: await this.deps.artifactStore.readText("specification.md") }),
+      { specification },
+      (output) => output,
     );
     const { definitions, chunks } = parsePlan(plannerOutput);
 
@@ -524,11 +574,11 @@ export class RunController {
     const plan = await this.deps.artifactStore.readText("plan.md");
     const chunkId = activeChunkId(state);
     const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
-    const developerOutput = await this.deps.roleAgent.prompt(
+    const { report, deviated } = await this.promptRoleWithQuestionRetry(
       "developer",
-      buildRoleHandoff("developer", { specification, plan, chunk }),
+      { specification, plan, chunk },
+      parseDeveloperOutput,
     );
-    const { report, deviated } = parseDeveloperOutput(developerOutput);
 
     await this.deps.artifactStore.writeText(implementationReportPath(chunkId), report);
 
@@ -552,11 +602,11 @@ export class RunController {
     const chunkId = activeChunkId(state);
     const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
     const review = await this.deps.artifactStore.readText(implementationReportPath(chunkId));
-    const reviewerOutput = await this.deps.roleAgent.prompt(
+    const { verdict, report } = await this.promptRoleWithQuestionRetry(
       "reviewer",
-      buildRoleHandoff("reviewer", { specification, plan, chunk, review }),
+      { specification, plan, chunk, review },
+      (output) => parseReviewerOutput(output, parseChunkDefinition(JSON.parse(chunk))),
     );
-    const { verdict, report } = parseReviewerOutput(reviewerOutput, parseChunkDefinition(JSON.parse(chunk)));
     const attempt = state.chunks.find(({ id }) => id === chunkId)?.reviewAttempts;
 
     if (attempt === undefined) {
