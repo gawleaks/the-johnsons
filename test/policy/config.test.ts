@@ -80,10 +80,13 @@ describe("policy config", () => {
       chunk: "chunk",
       review: "review",
       developerReviewReasoning: "hidden reasoning",
+      answer: "user answer",
     };
 
     expect(buildRoleHandoff("reviewer", artifacts)).not.toContain("hidden reasoning");
+    expect(buildRoleHandoff("reviewer", artifacts)).toContain("user answer");
     expect(buildRoleHandoff("developer", artifacts)).toContain("hidden reasoning");
+    expect(buildRoleHandoff("developer", artifacts)).toContain("user answer");
   });
 
   it("requires structured artifacts and deviation escalation in the prompts", () => {

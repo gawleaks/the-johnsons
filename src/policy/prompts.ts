@@ -6,6 +6,7 @@ export interface RoleHandoffArtifacts {
   readonly chunk?: string;
   readonly review?: string;
   readonly developerReviewReasoning?: string;
+  readonly answer?: string;
 }
 
 const promptLines = (lines: ReadonlyArray<string>): string => lines.join("\n");
@@ -48,6 +49,7 @@ export const buildRoleHandoff = (
     artifacts.chunk,
     artifacts.review,
     role === "reviewer" ? undefined : artifacts.developerReviewReasoning,
+    artifacts.answer,
   ];
 
   return values.filter(defined).join("\n\n---\n\n");
