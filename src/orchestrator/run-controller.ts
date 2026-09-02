@@ -205,8 +205,73 @@ const parseDeveloperOutput = (output: string): { readonly report: string; readon
 };
 
 const validReviewerVerdicts = new Set<ReviewVerdict>(["approved", "rejected", "escalate"]);
+const validFindingSeverities = new Set<ReviewerFinding["severity"]>(["blocker", "major", "minor"]);
+const validReviewStatuses = new Set<ReviewerAcceptanceCriterion["status"]>(["pass", "fail"]);
 
-const parseReviewerOutput = (output: string): { readonly verdict: ReviewVerdict; readonly report: string } => {
+interface ReviewerFinding {
+  readonly severity: "blocker" | "major" | "minor";
+  readonly location: string;
+  readonly problem: string;
+  readonly requiredFix: string;
+}
+
+interface ReviewerAcceptanceCriterion {
+  readonly id: string;
+  readonly status: "pass" | "fail";
+}
+
+interface ReviewerCheck {
+  readonly command: string;
+  readonly status: "pass" | "fail";
+  readonly evidence: string;
+}
+
+interface ReviewerOutput {
+  readonly verdict: ReviewVerdict;
+  readonly summary: string;
+  readonly findings: ReadonlyArray<ReviewerFinding>;
+  readonly acceptanceCriteria: ReadonlyArray<ReviewerAcceptanceCriterion>;
+  readonly checks: ReadonlyArray<ReviewerCheck>;
+}
+
+const isReviewerFindingSeverity = (value: unknown): value is ReviewerFinding["severity"] =>
+  typeof value === "string" && validFindingSeverities.has(value as ReviewerFinding["severity"]);
+
+const isReviewerStatus = (value: unknown): value is ReviewerAcceptanceCriterion["status"] =>
+  typeof value === "string" && validReviewStatuses.has(value as ReviewerAcceptanceCriterion["status"]);
+
+const hasExactAcceptancePasses = (
+  actual: ReadonlyArray<ReviewerAcceptanceCriterion>,
+  expected: ReadonlyArray<string>,
+): boolean => {
+  if (actual.length !== expected.length) {
+    return false;
+  }
+
+  return expected.every((value) =>
+    actual.filter((entry) => entry.id === value && entry.status === "pass").length === 1,
+  );
+};
+
+const hasExactCheckPasses = (
+  actual: ReadonlyArray<ReviewerCheck>,
+  expected: ReadonlyArray<string>,
+): boolean => {
+  if (actual.length !== expected.length) {
+    return false;
+  }
+
+  return expected.every((value) =>
+    actual.filter((entry) => entry.command === value && entry.status === "pass").length === 1,
+  );
+};
+
+const isApprovalSatisfied = (review: ReviewerOutput, chunk: ChunkDefinition): boolean =>
+  review.findings.every(({ severity }) => severity === "minor")
+  && hasExactAcceptancePasses(review.acceptanceCriteria, chunk.acceptanceCriteria.map(({ id }) => id))
+  && hasExactCheckPasses(review.checks, chunk.requiredChecks);
+
+const parseReviewerOutput = (output: string, chunk: ChunkDefinition): { readonly verdict: ReviewVerdict; readonly report: string } => {
   let parsed: unknown;
 
   try {
@@ -220,15 +285,95 @@ const parseReviewerOutput = (output: string): { readonly verdict: ReviewVerdict;
   }
 
   const keys = Object.keys(parsed);
-  if (keys.length !== 2 || !keys.includes("verdict") || !keys.includes("report")) {
+  const requiredKeys = ["verdict", "summary", "findings", "acceptanceCriteria", "checks"];
+  if (keys.length !== requiredKeys.length || requiredKeys.some((key) => !keys.includes(key))) {
     throw new Error("Invalid reviewer output");
   }
 
-  if (!validReviewerVerdicts.has(parsed.verdict as ReviewVerdict) || !isNonEmptyString(parsed.report)) {
+  if (!validReviewerVerdicts.has(parsed.verdict as ReviewVerdict) || !isNonEmptyString(parsed.summary)) {
     throw new Error("Invalid reviewer output");
   }
 
-  return { verdict: parsed.verdict as ReviewVerdict, report: parsed.report };
+  if (!Array.isArray(parsed.findings) || !Array.isArray(parsed.acceptanceCriteria) || !Array.isArray(parsed.checks)) {
+    throw new Error("Invalid reviewer output");
+  }
+
+  const findings = parsed.findings.map((finding) => {
+    if (!isRecord(finding)) {
+      throw new Error("Invalid reviewer output");
+    }
+
+    const findingKeys = Object.keys(finding);
+    if (findingKeys.length !== 4 || ["severity", "location", "problem", "requiredFix"].some((key) => !findingKeys.includes(key))) {
+      throw new Error("Invalid reviewer output");
+    }
+
+    if (!isReviewerFindingSeverity(finding.severity) || !isNonEmptyString(finding.location) || !isNonEmptyString(finding.problem) || !isNonEmptyString(finding.requiredFix)) {
+      throw new Error("Invalid reviewer output");
+    }
+
+    return {
+      severity: finding.severity,
+      location: finding.location,
+      problem: finding.problem,
+      requiredFix: finding.requiredFix,
+    };
+  });
+
+  const acceptanceCriteria = parsed.acceptanceCriteria.map((criterion) => {
+    if (!isRecord(criterion)) {
+      throw new Error("Invalid reviewer output");
+    }
+
+    const criterionKeys = Object.keys(criterion);
+    if (criterionKeys.length !== 2 || !criterionKeys.includes("id") || !criterionKeys.includes("status")) {
+      throw new Error("Invalid reviewer output");
+    }
+
+    if (!isNonEmptyString(criterion.id) || !isReviewerStatus(criterion.status)) {
+      throw new Error("Invalid reviewer output");
+    }
+
+    return {
+      id: criterion.id,
+      status: criterion.status,
+    };
+  });
+
+  const checks = parsed.checks.map((check) => {
+    if (!isRecord(check)) {
+      throw new Error("Invalid reviewer output");
+    }
+
+    const checkKeys = Object.keys(check);
+    if (checkKeys.length !== 3 || !checkKeys.includes("command") || !checkKeys.includes("status") || !checkKeys.includes("evidence")) {
+      throw new Error("Invalid reviewer output");
+    }
+
+    if (!isNonEmptyString(check.command) || !isReviewerStatus(check.status) || !isNonEmptyString(check.evidence)) {
+      throw new Error("Invalid reviewer output");
+    }
+
+    return {
+      command: check.command,
+      status: check.status,
+      evidence: check.evidence,
+    };
+  });
+
+  const review = {
+    verdict: parsed.verdict as ReviewVerdict,
+    summary: parsed.summary,
+    findings,
+    acceptanceCriteria,
+    checks,
+  } satisfies ReviewerOutput;
+
+  if (review.verdict === "approved" && !isApprovalSatisfied(review, chunk)) {
+    throw new Error("Invalid reviewer output");
+  }
+
+  return { verdict: review.verdict, report: output };
 };
 
 const listQuestionIndexes = async (artifactStore: ArtifactStore): Promise<ReadonlyArray<number>> => {
@@ -397,7 +542,7 @@ export class RunController {
       "reviewer",
       buildRoleHandoff("reviewer", { specification, plan, chunk, review }),
     );
-    const { verdict, report } = parseReviewerOutput(reviewerOutput);
+    const { verdict, report } = parseReviewerOutput(reviewerOutput, parseChunkDefinition(JSON.parse(chunk)));
     const attempt = state.chunks.find(({ id }) => id === chunkId)?.reviewAttempts;
 
     if (attempt === undefined) {

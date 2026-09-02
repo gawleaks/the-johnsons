@@ -71,6 +71,15 @@ const chunkDefinition = (id: string, overrides: Record<string, unknown> = {}) =>
 
 const planResponse = (...chunks: ReadonlyArray<Record<string, unknown>>) => JSON.stringify({ chunks });
 
+const reviewerResponse = (overrides: Record<string, unknown> = {}) => JSON.stringify({
+  verdict: "approved",
+  summary: "looks good",
+  findings: [],
+  acceptanceCriteria: [{ id: "AC-1", status: "pass" }],
+  checks: [{ command: "npm test -- test/orchestrator/run-controller.test.ts", status: "pass", evidence: "ok" }],
+  ...overrides,
+});
+
 const createUi = (options: {
   approved?: boolean;
   onApproveSpecification?: ((specification: string) => void) | undefined;
@@ -342,7 +351,7 @@ describe("RunController slice 3", () => {
         executionState("run-1", workspace, "developing"),
         {
           developer: [JSON.stringify({ report: "implemented", deviated: false })],
-          reviewer: [JSON.stringify({ verdict: "approved", report: "looks good" })],
+          reviewer: [reviewerResponse()],
         },
       );
 
@@ -354,7 +363,7 @@ describe("RunController slice 3", () => {
         chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 0 }],
       });
       await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe("implemented");
-      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe("looks good");
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe(reviewerResponse());
       expect(agent.calls).toEqual([
         {
           role: "developer",
@@ -379,8 +388,14 @@ describe("RunController slice 3", () => {
             JSON.stringify({ report: "implemented twice", deviated: false }),
           ],
           reviewer: [
-            JSON.stringify({ verdict: "rejected", report: "try again" }),
-            JSON.stringify({ verdict: "approved", report: "now good" }),
+            reviewerResponse({
+              verdict: "rejected",
+              summary: "try again",
+              findings: [{ severity: "major", location: "src/file.ts:1", problem: "broken", requiredFix: "fix it" }],
+              acceptanceCriteria: [{ id: "AC-1", status: "fail" }],
+              checks: [{ command: "npm test -- test/orchestrator/run-controller.test.ts", status: "fail", evidence: "failed" }],
+            }),
+            reviewerResponse({ summary: "now good" }),
           ],
         },
       );
@@ -392,8 +407,16 @@ describe("RunController slice 3", () => {
         transitionId: 7,
         chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 1 }],
       });
-      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe("try again");
-      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe("now good");
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe(
+        reviewerResponse({
+          verdict: "rejected",
+          summary: "try again",
+          findings: [{ severity: "major", location: "src/file.ts:1", problem: "broken", requiredFix: "fix it" }],
+          acceptanceCriteria: [{ id: "AC-1", status: "fail" }],
+          checks: [{ command: "npm test -- test/orchestrator/run-controller.test.ts", status: "fail", evidence: "failed" }],
+        }),
+      );
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe(reviewerResponse({ summary: "now good" }));
       await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe("implemented twice");
       expect(agent.calls.map(({ role }) => role)).toEqual(["developer", "reviewer", "developer", "reviewer"]);
     });
@@ -406,7 +429,13 @@ describe("RunController slice 3", () => {
         executionState("run-1", workspace, "developing", 1),
         {
           developer: [JSON.stringify({ report: "implemented", deviated: false })],
-          reviewer: [JSON.stringify({ verdict: "rejected", report: "still broken" })],
+          reviewer: [reviewerResponse({
+            verdict: "rejected",
+            summary: "still broken",
+            findings: [{ severity: "major", location: "src/file.ts:1", problem: "broken", requiredFix: "fix it" }],
+            acceptanceCriteria: [{ id: "AC-1", status: "fail" }],
+            checks: [{ command: "npm test -- test/orchestrator/run-controller.test.ts", status: "fail", evidence: "failed" }],
+          })],
         },
       );
 
@@ -418,7 +447,13 @@ describe("RunController slice 3", () => {
         transitionId: 5,
         chunks: [{ id: "chunk-a", status: "escalated", reviewAttempts: 2 }],
       });
-      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe("still broken");
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe(reviewerResponse({
+        verdict: "rejected",
+        summary: "still broken",
+        findings: [{ severity: "major", location: "src/file.ts:1", problem: "broken", requiredFix: "fix it" }],
+        acceptanceCriteria: [{ id: "AC-1", status: "fail" }],
+        checks: [{ command: "npm test -- test/orchestrator/run-controller.test.ts", status: "fail", evidence: "failed" }],
+      }));
       expect(agent.calls.map(({ role }) => role)).toEqual(["developer", "reviewer"]);
     });
   });
@@ -445,6 +480,41 @@ describe("RunController slice 3", () => {
     });
   });
 
+  it("allows escalate reviewer verdicts that match the schema", async () => {
+    await withTempDir(async (workspace) => {
+      const { controller, store } = await createExecutionController(
+        workspace,
+        executionState("run-1", workspace, "reviewing"),
+        {
+          reviewer: [reviewerResponse({
+            verdict: "escalate",
+            summary: "need a human",
+            findings: [{ severity: "minor", location: "src/file.ts:1", problem: "unclear", requiredFix: "decide" }],
+            acceptanceCriteria: [{ id: "AC-1", status: "fail" }],
+            checks: [{ command: "npm test -- test/orchestrator/run-controller.test.ts", status: "fail", evidence: "blocked" }],
+          })],
+        },
+        "implemented",
+      );
+
+      await controller.start();
+
+      await expect(store.loadState()).resolves.toMatchObject({
+        phase: "escalated",
+        activeChunkId: "chunk-a",
+        transitionId: 5,
+        chunks: [{ id: "chunk-a", status: "escalated", reviewAttempts: 0 }],
+      });
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe(reviewerResponse({
+        verdict: "escalate",
+        summary: "need a human",
+        findings: [{ severity: "minor", location: "src/file.ts:1", problem: "unclear", requiredFix: "decide" }],
+        acceptanceCriteria: [{ id: "AC-1", status: "fail" }],
+        checks: [{ command: "npm test -- test/orchestrator/run-controller.test.ts", status: "fail", evidence: "blocked" }],
+      }));
+    });
+  });
+
   it.each([
     ["not json", "Invalid developer output"],
     [JSON.stringify({ report: "", deviated: false }), "Invalid developer output"],
@@ -465,7 +535,15 @@ describe("RunController slice 3", () => {
 
   it.each([
     ["not json", "Invalid reviewer output"],
-    [JSON.stringify({ verdict: "approved", report: "" }), "Invalid reviewer output"],
+    [reviewerResponse({ summary: "" }), "Invalid reviewer output"],
+    [reviewerResponse({ findings: [{ severity: "blocker", location: "src/file.ts:1", problem: "broken", requiredFix: "fix it" }] }), "Invalid reviewer output"],
+    [reviewerResponse({ findings: [{ severity: "major", location: "src/file.ts:1", problem: "broken", requiredFix: "fix it" }] }), "Invalid reviewer output"],
+    [reviewerResponse({ acceptanceCriteria: [] }), "Invalid reviewer output"],
+    [reviewerResponse({ acceptanceCriteria: [{ id: "AC-2", status: "pass" }] }), "Invalid reviewer output"],
+    [reviewerResponse({ acceptanceCriteria: [{ id: "AC-1", status: "pass" }, { id: "AC-1", status: "pass" }] }), "Invalid reviewer output"],
+    [reviewerResponse({ checks: [] }), "Invalid reviewer output"],
+    [reviewerResponse({ checks: [{ command: "npm test", status: "pass", evidence: "ok" }] }), "Invalid reviewer output"],
+    [reviewerResponse({ checks: [{ command: "npm test -- test/orchestrator/run-controller.test.ts", status: "pass", evidence: "ok" }, { command: "npm test -- test/orchestrator/run-controller.test.ts", status: "pass", evidence: "ok again" }] }), "Invalid reviewer output"],
   ])("rejects malformed reviewer responses without artifacts or transitions", async (response) => {
     await withTempDir(async (workspace) => {
       const initialState = executionState("run-1", workspace, "reviewing");
@@ -521,7 +599,7 @@ describe("RunController slice 4", () => {
       await store.writeText("specification.md", "# Existing spec\n");
       const agent = createFakeAgent({
         developer: [JSON.stringify({ report: "implemented", deviated: false })],
-        reviewer: [JSON.stringify({ verdict: "approved", report: "approved" })],
+        reviewer: [reviewerResponse({ summary: "approved" })],
       });
       const controller = new RunController({
         artifactStore: store,
@@ -604,7 +682,7 @@ describe("RunController slice 4", () => {
       const { store } = await createExecutionController(workspace, state, {});
       const agent = createFakeAgent({
         developer: [JSON.stringify({ report: "fixed", deviated: false })],
-        reviewer: [JSON.stringify({ verdict: "approved", report: "done" })],
+        reviewer: [reviewerResponse({ summary: "done" })],
       });
       const controller = new RunController({
         artifactStore: store,
@@ -621,7 +699,7 @@ describe("RunController slice 4", () => {
         chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 1 }],
       });
       expect(agent.calls.map(({ role }) => role)).toEqual(["developer", "reviewer"]);
-      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe("done");
+      await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe(reviewerResponse({ summary: "done" }));
     });
   });
 });
