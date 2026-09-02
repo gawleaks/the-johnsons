@@ -91,6 +91,10 @@ describe("policy config", () => {
     expect(rolePrompts.planner).toContain("JSON");
     expect(rolePrompts.developer).toContain("plan deviation");
     expect(rolePrompts.developer).toContain("escalate");
-    expect(rolePrompts.reviewer).toContain("JSON");
+    expect(rolePrompts.reviewer).toContain('"verdict"');
+    expect(rolePrompts.reviewer).toContain('"summary"');
+    expect(rolePrompts.reviewer).toContain('"findings"');
+    expect(rolePrompts.reviewer).toContain('"acceptanceCriteria"');
+    expect(rolePrompts.reviewer).toContain('"checks"');
   });
 });

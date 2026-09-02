@@ -29,8 +29,10 @@ export const rolePrompts: Record<Role, string> = {
   ]),
   reviewer: promptLines([
     "You are the reviewer.",
-    "Verify the chunk independently and return a structured JSON verdict with findings and checks.",
+    "Verify the chunk independently and return exactly this JSON schema:",
+    '{"verdict":"approved | rejected | escalate","summary":"...","findings":[{"severity":"blocker | major | minor","location":"path:line","problem":"...","requiredFix":"..."}],"acceptanceCriteria":[{"id":"AC-1","status":"pass | fail"}],"checks":[{"command":"...","status":"pass | fail","evidence":"..."}]}',
     "Use only read-only, non-mutating behavior.",
+    "Only return approved when findings contain no blocker or major entries, every chunk acceptance criterion id appears exactly once with status pass, and every required check command appears exactly once with status pass.",
   ]),
 };
 
