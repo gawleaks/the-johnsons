@@ -211,7 +211,18 @@ export const createProductionDependencies = (): MainDependencies => {
       policy.roles,
       createAgentProcessFactory(join(workspace, ".johnsons", "runs", runId, "sessions"), executionWorkspace),
     ),
-    createRunController: (deps) => new RunController(deps),
+    createRunController: (deps) => new RunController({
+      ...deps,
+      ...(deps.policy.checkpointMode === "metadata"
+        ? {
+          workspaceSafety: {
+            capture: (workspace: string) => new WorkspaceManager({ mode: "metadata" }).captureSnapshot(workspace),
+            assertUnchanged: (snapshot: unknown, workspace: string) =>
+              new WorkspaceManager({ mode: "metadata" }).assertUnchanged(snapshot as Record<string, string>, workspace),
+          },
+        }
+        : {}),
+    }),
   };
 };
 

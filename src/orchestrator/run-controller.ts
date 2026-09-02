@@ -12,6 +12,7 @@ import type {
 import type { Policy } from "../policy/config.js";
 import { buildRoleHandoff, type RoleHandoffArtifacts } from "../policy/prompts.js";
 import type { ArtifactStore } from "../storage/artifact-store.js";
+import { ExternalWorkspaceChange } from "../workspace/workspace-manager.js";
 
 export interface RoleAgent {
   prompt(role: Role, handoff: string): Promise<string>;
@@ -28,6 +29,10 @@ export interface RunControllerDeps {
   readonly policy: Policy;
   readonly roleAgent: RoleAgent;
   readonly ui: RunUi;
+  readonly workspaceSafety?: {
+    capture(workspace: string): Promise<unknown>;
+    assertUnchanged(snapshot: unknown, workspace: string): Promise<void>;
+  };
 }
 
 const parseSpecification = (output: string): string => {
@@ -413,6 +418,8 @@ const listQuestionIndexes = async (artifactStore: ArtifactStore): Promise<Readon
 };
 
 export class RunController {
+  readonly #snapshots = new Map<string, unknown>();
+
   constructor(private readonly deps: RunControllerDeps) {}
 
   async start(): Promise<RunState> {
@@ -644,6 +651,8 @@ export class RunController {
     const plan = await this.deps.artifactStore.readText("plan.md");
     const chunkId = activeChunkId(state);
     const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
+    const snapshot = this.deps.workspaceSafety && await this.deps.workspaceSafety.capture(state.workspace);
+    if (snapshot !== undefined) this.#snapshots.set(chunkId, snapshot);
     const developmentResult = await this.promptRoleWithQuestionRetry(
       state,
       "developer",
@@ -669,9 +678,20 @@ export class RunController {
   }
 
   private async finishReview(state: RunState): Promise<RunState> {
+    const chunkId = activeChunkId(state);
+    const snapshot = this.#snapshots.get(chunkId);
+
+    try {
+      if (snapshot !== undefined) await this.deps.workspaceSafety?.assertUnchanged(snapshot, state.workspace);
+    } catch (error) {
+      if (!(error instanceof ExternalWorkspaceChange)) throw error;
+      const next = applyTransition(state, { type: "reviewed", verdict: "escalate" }, this.deps.policy);
+      await this.deps.artifactStore.appendTransition({ type: "reviewed", verdict: "escalate" }, next);
+      return next;
+    }
+
     const specification = await this.deps.artifactStore.readText("specification.md");
     const plan = await this.deps.artifactStore.readText("plan.md");
-    const chunkId = activeChunkId(state);
     const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
     const review = await this.deps.artifactStore.readText(implementationReportPath(chunkId));
     const reviewResult = await this.promptRoleWithQuestionRetry(
