@@ -396,6 +396,34 @@ describe("RunController slice 2", () => {
       expect(agent.calls[0]).toEqual({ role: "planner", handoff: specification });
     });
   });
+
+  it("resumes from durable planning by reusing the stored specification and moving to developing", async () => {
+    await withTempDir(async (workspace) => {
+      const specification = "# Existing spec\n\n- durable\n";
+      const plannerResponse = planResponse(chunkDefinition("chunk-a"));
+      const { agent, controller, store } = await createPlanningController(
+        workspace,
+        specification,
+        plannerResponse,
+      );
+
+      await expect(controller.resume()).rejects.toThrow("No fake response for developer");
+
+      await expect(store.loadState()).resolves.toMatchObject({
+        phase: "developing",
+        transitionId: 3,
+        activeChunkId: "chunk-a",
+        chunks: [{ id: "chunk-a", status: "developing", reviewAttempts: 0 }],
+      });
+      await expect(readFile(specPath(workspace, "run-1"), "utf8")).resolves.toBe(specification);
+      await expect(readFile(planPath(workspace, "run-1"), "utf8")).resolves.toBe(plannerResponse);
+      await expect(readFile(chunkDefinitionPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe(
+        JSON.stringify(chunkDefinition("chunk-a")),
+      );
+      expect(agent.calls.map(({ role }) => role)).toEqual(["planner", "developer"]);
+      expect(agent.calls[0]).toEqual({ role: "planner", handoff: specification });
+    });
+  });
 });
 
 describe("RunController slice 3", () => {
