@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { main, workspaceSafetyFor } from "../src/cli.js";
+import { createProductionDependencies, main, workspaceSafetyFor } from "../src/cli.js";
 import { createRunState, type Role, type RunState } from "../src/domain/types.js";
 import { defaultPolicy, type Policy } from "../src/policy/config.js";
 import { ArtifactStore } from "../src/storage/artifact-store.js";
@@ -96,6 +96,33 @@ const createDependencies = (workspace: string, overrides: Partial<MainDependenci
 describe("workspaceSafetyFor", () => {
   it("omits metadata workspace safety in git mode", () => {
     expect(workspaceSafetyFor("git")).toBeUndefined();
+  });
+
+  it("creates metadata workspace safety", () => {
+    expect(workspaceSafetyFor("metadata")).toMatchObject({
+      capture: expect.any(Function),
+      assertUnchanged: expect.any(Function),
+    });
+  });
+});
+
+describe("production dependencies", () => {
+  it("wires metadata safety into its run controller", async () => {
+    await withTempDir(async (workspace) => {
+      const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));
+      const controller = createProductionDependencies().createRunController({
+        artifactStore: store,
+        policy: defaultPolicy,
+        roleAgent: { prompt: async () => "" },
+        ui: {
+          approveSpecification: async () => true,
+          askQuestion: async () => "",
+          resolveEscalation: async () => true,
+        },
+      });
+
+      expect((controller as unknown as { deps: { workspaceSafety?: unknown } }).deps.workspaceSafety).toBeDefined();
+    });
   });
 });
 
