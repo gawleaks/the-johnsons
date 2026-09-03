@@ -173,6 +173,7 @@ const parsePlan = (output: string): {
 
 const chunkDefinitionPath = (id: string): string => join("chunks", id, "definition.md");
 const implementationReportPath = (id: string): string => join("chunks", id, "implementation-report.md");
+const workspaceSnapshotPath = (id: string): string => join("chunks", id, "workspace-snapshot.json");
 const reviewArtifactPath = (id: string, attempt: number): string => join("chunks", id, `review-${attempt}.md`);
 const questionsPath = "questions";
 const questionArtifactPath = (index: number): string => join(questionsPath, `${index.toString().padStart(4, "0")}.json`);
@@ -652,7 +653,10 @@ export class RunController {
     const chunkId = activeChunkId(state);
     const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
     const snapshot = this.deps.workspaceSafety && await this.deps.workspaceSafety.capture(state.workspace);
-    if (snapshot !== undefined) this.#snapshots.set(chunkId, snapshot);
+    if (snapshot !== undefined) {
+      this.#snapshots.set(chunkId, snapshot);
+      await this.deps.artifactStore.writeJson(workspaceSnapshotPath(chunkId), snapshot);
+    }
     const developmentResult = await this.promptRoleWithQuestionRetry(
       state,
       "developer",
@@ -677,9 +681,18 @@ export class RunController {
     return resume ? this.runExecutionLoop(next) : next;
   }
 
+  private async loadWorkspaceSnapshot(chunkId: string): Promise<unknown | undefined> {
+    try {
+      return JSON.parse(await this.deps.artifactStore.readText(workspaceSnapshotPath(chunkId)));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+  }
+
   private async finishReview(state: RunState): Promise<RunState> {
     const chunkId = activeChunkId(state);
-    const snapshot = this.#snapshots.get(chunkId);
+    const snapshot = this.#snapshots.get(chunkId) ?? await this.loadWorkspaceSnapshot(chunkId);
 
     try {
       if (snapshot !== undefined) await this.deps.workspaceSafety?.assertUnchanged(snapshot, state.workspace);
