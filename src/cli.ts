@@ -32,6 +32,8 @@ class ValidationError extends Error {
   readonly exitCode = 2;
 }
 
+class UnsupportedPiVersionError extends Error {}
+
 const invalid = (message: string): ValidationError => new ValidationError(message);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -182,7 +184,7 @@ export const validatePiVersion = async (version = supportedPiVersion): Promise<v
   new Promise((resolve, reject) => {
     execFile("pi", ["--version"], (error, stdout) => {
       if (error) return reject(new Error("Unable to validate Pi version"));
-      return stdout.trim() === version ? resolve() : reject(new Error(`Unsupported Pi version: ${stdout.trim()}`));
+      return stdout.trim() === version ? resolve() : reject(new UnsupportedPiVersionError(`Unsupported Pi version: ${stdout.trim()}`));
     });
   });
 
@@ -251,6 +253,15 @@ const parseCliCommand = (argv: readonly string[]): Command => {
   }
 };
 
+const validatePiRuntime = async (operation: () => Promise<void>): Promise<void> => {
+  try {
+    await operation();
+  } catch (error) {
+    if (error instanceof UnsupportedPiVersionError) throw invalid(error.message);
+    throw error;
+  }
+};
+
 const validateInput = async <T>(operation: () => Promise<T> | T): Promise<T> => {
   try {
     return await operation();
@@ -263,7 +274,7 @@ const startRun = async (
   command: Extract<Command, { type: "start" }>,
   dependencies: MainDependencies,
 ): Promise<number> => {
-  await validateInput(() => dependencies.validatePiVersion());
+  await validatePiRuntime(() => dependencies.validatePiVersion());
   const io = dependencies.createTerminalIo();
   const ui = new TerminalRunUi(io);
   const presets = await validateInput(() => dependencies.presetStore.list(command.workspace));
@@ -292,7 +303,7 @@ const resumeRun = async (
   command: Extract<Command, { type: "resume" }>,
   dependencies: MainDependencies,
 ): Promise<number> => {
-  await validateInput(() => dependencies.validatePiVersion());
+  await validatePiRuntime(() => dependencies.validatePiVersion());
   const artifactStore = await validateInput(() => ArtifactStore.open(command.workspace, command.runId));
   const policy = await loadPersistedPolicy(command.workspace, command.runId);
   const catalog = await dependencies.loadAvailableModels(policy.roles.architect.model);
