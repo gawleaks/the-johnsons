@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { createProductionDependencies, main, workspaceSafetyFor } from "../src/cli.js";
+import { createProductionDependencies, main, validatePiVersion, workspaceSafetyFor } from "../src/cli.js";
 import { createRunState, type Role, type RunState } from "../src/domain/types.js";
 import { defaultPolicy, type Policy } from "../src/policy/config.js";
 import { ArtifactStore } from "../src/storage/artifact-store.js";
@@ -93,6 +93,13 @@ const createDependencies = (workspace: string, overrides: Partial<MainDependenci
     ...overrides,
   };
 };
+
+describe("validatePiVersion", () => {
+  it("accepts the package-pinned Pi version and rejects a mismatch", async () => {
+    await expect(validatePiVersion()).resolves.toBeUndefined();
+    await expect(validatePiVersion("0.0.0")).rejects.toThrow(/unsupported pi version/i);
+  });
+});
 
 describe("workspaceSafetyFor", () => {
   it("omits metadata workspace safety in git mode", () => {
@@ -278,6 +285,17 @@ describe("main", () => {
 
       await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(2);
       expect(agents).toBe(0);
+    });
+  });
+
+  it("validates Pi version before opening a resumed run", async () => {
+    await withTempDir(async (workspace) => {
+      const dependencies = createDependencies(workspace, {
+        validatePiVersion: async () => { throw new Error("Unsupported Pi version: 0.0.0"); },
+      });
+
+      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      expect(dependencies.roleAgent.closed()).toBe(0);
     });
   });
 
