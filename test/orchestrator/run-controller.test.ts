@@ -643,6 +643,28 @@ describe("RunController slice 3", () => {
     });
   });
 
+  it("reviews normally when metadata workspace is unchanged", async () => {
+    await withTempDir(async (workspace) => {
+      const { agent, controller } = await createExecutionController(
+        workspace,
+        executionState("run-1", workspace, "developing"),
+        {
+          developer: [JSON.stringify({ report: "implemented", deviated: false })],
+          reviewer: [reviewerResponse()],
+        },
+        undefined,
+        createUi(),
+        {
+          capture: async () => ({ before: "snapshot" }),
+          assertUnchanged: async () => undefined,
+        },
+      );
+
+      await expect(controller.start()).resolves.toMatchObject({ phase: "completed" });
+      expect(agent.calls.map(({ role }) => role)).toEqual(["developer", "reviewer"]);
+    });
+  });
+
   it("escalates without reviewer dispatch when metadata workspace changes", async () => {
     await withTempDir(async (workspace) => {
       const state = executionState("run-1", workspace, "developing");

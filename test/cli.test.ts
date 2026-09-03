@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { main } from "../src/cli.js";
+import { main, workspaceSafetyFor } from "../src/cli.js";
 import { createRunState, type Role, type RunState } from "../src/domain/types.js";
 import { defaultPolicy, type Policy } from "../src/policy/config.js";
 import { ArtifactStore } from "../src/storage/artifact-store.js";
@@ -92,6 +92,12 @@ const createDependencies = (workspace: string, overrides: Partial<MainDependenci
     ...overrides,
   };
 };
+
+describe("workspaceSafetyFor", () => {
+  it("omits metadata workspace safety in git mode", () => {
+    expect(workspaceSafetyFor("git")).toBeUndefined();
+  });
+});
 
 describe("main", () => {
   it("starts a run after policy confirmation and persists its selected policy", async () => {
