@@ -101,7 +101,7 @@ export function applyTransition(
   policy: { maxReviewAttempts: number },
 ): RunState {
   if (transition.type === "dispatching") {
-    return state;
+    return nextState(state, {});
   }
 
   if (transition.type === "specification-created" && state.phase === "architecting") {

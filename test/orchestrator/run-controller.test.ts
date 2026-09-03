@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -32,6 +33,35 @@ const reviewPath = (workspace: string, runId: string, chunkId: string, attempt: 
   join(runRoot(workspace, runId), "chunks", chunkId, `review-${attempt}.md`);
 const questionPath = (workspace: string, runId: string, index: number): string =>
   join(runRoot(workspace, runId), "questions", `${index.toString().padStart(4, "0")}.json`);
+const statePath = (workspace: string, runId: string): string => join(runRoot(workspace, runId), "state.json");
+const transitionsPath = (workspace: string, runId: string): string => join(runRoot(workspace, runId), "transitions.jsonl");
+
+const joinHandoff = (...parts: ReadonlyArray<string>): string => parts.join("\n\n---\n\n");
+const handoffDigest = (handoff: string): string => createHash("sha256").update(handoff).digest("hex");
+
+const readTransitions = async (workspace: string, runId: string): Promise<ReadonlyArray<{ transition: Record<string, unknown>; next: RunState }>> =>
+  (await readFile(transitionsPath(workspace, runId), "utf8"))
+    .trimEnd()
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => JSON.parse(line) as { transition: Record<string, unknown>; next: RunState });
+
+const expectLastDispatchTransition = async (
+  workspace: string,
+  role: Role,
+  handoff: string,
+  transitionTypes: ReadonlyArray<string>,
+  transitionId: number,
+): Promise<void> => {
+  const transitions = await readTransitions(workspace, "run-1");
+  const last = transitions.at(-1);
+
+  expect(transitions.map(({ transition }) => transition.type)).toEqual(transitionTypes);
+  expect(last?.transition).toEqual({ type: "dispatching", role, handoffDigest: handoffDigest(handoff) });
+  expect(last?.transition).not.toHaveProperty("handoff");
+  expect(last?.next.transitionId).toBe(transitionId);
+  expect(JSON.parse(await readFile(statePath(workspace, "run-1"), "utf8"))).toMatchObject({ transitionId });
+};
 
 const planningState = (runId: string, workspace: string) => ({
   version: 1 as const,
@@ -237,7 +267,7 @@ describe("RunController slice 1", () => {
 
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "completed",
-        transitionId: 5,
+        transitionId: 9,
         chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 0 }],
       });
       await expect(readFile(specPath(workspace, "run-1"), "utf8")).resolves.toBe(specification);
@@ -259,7 +289,7 @@ describe("RunController slice 1", () => {
 
       await controller.start();
 
-      await expect(store.loadState()).resolves.toMatchObject({ phase: "awaiting-spec-approval", transitionId: 1 });
+      await expect(store.loadState()).resolves.toMatchObject({ phase: "awaiting-spec-approval", transitionId: 2 });
       expect(agent.calls).toHaveLength(1);
       expect(agent.calls[0]?.role).toBe("architect");
     });
@@ -281,7 +311,7 @@ describe("RunController slice 1", () => {
       });
 
       await expect(controller.start()).rejects.toThrow();
-      await expect(store.loadState()).resolves.toMatchObject({ phase: "architecting", transitionId: 0 });
+      await expect(store.loadState()).resolves.toMatchObject({ phase: "architecting", transitionId: 1 });
       expect(agent.calls.map(({ role }) => role)).toEqual(["architect"]);
       await expect(readFile(specPath(workspace, runId), "utf8")).rejects.toThrow();
     });
@@ -335,7 +365,7 @@ describe("RunController slice 2", () => {
 
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "completed",
-        transitionId: 7,
+        transitionId: 12,
         chunks: [
           { id: "chunk-a", status: "approved", reviewAttempts: 0 },
           { id: "chunk-b", status: "approved", reviewAttempts: 0 },
@@ -397,7 +427,7 @@ describe("RunController slice 2", () => {
       );
 
       await expect(controller.start()).rejects.toThrow();
-      await expect(store.loadState()).resolves.toMatchObject({ phase: "planning", transitionId: 2 });
+      await expect(store.loadState()).resolves.toMatchObject({ phase: "planning", transitionId: 3 });
       expect(agent.calls.map(({ role }) => role)).toEqual(["planner"]);
       await expect(readFile(planPath(workspace, "run-1"), "utf8")).rejects.toThrow();
       await expect(readFile(chunkDefinitionPath(workspace, "run-1", "chunk-a"), "utf8")).rejects.toThrow();
@@ -438,7 +468,7 @@ describe("RunController slice 2", () => {
 
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "developing",
-        transitionId: 3,
+        transitionId: 5,
         activeChunkId: "chunk-a",
         chunks: [{ id: "chunk-a", status: "developing", reviewAttempts: 0 }],
       });
@@ -469,7 +499,7 @@ describe("RunController slice 3", () => {
 
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "completed",
-        transitionId: 5,
+        transitionId: 7,
         chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 0 }],
       });
       await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe("implemented");
@@ -514,7 +544,7 @@ describe("RunController slice 3", () => {
 
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "completed",
-        transitionId: 7,
+        transitionId: 11,
         chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 1 }],
       });
       await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe(
@@ -554,7 +584,7 @@ describe("RunController slice 3", () => {
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "escalated",
         activeChunkId: "chunk-a",
-        transitionId: 5,
+        transitionId: 7,
         chunks: [{ id: "chunk-a", status: "escalated", reviewAttempts: 2 }],
       });
       await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 2), "utf8")).resolves.toBe(reviewerResponse({
@@ -581,7 +611,7 @@ describe("RunController slice 3", () => {
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "escalated",
         activeChunkId: "chunk-a",
-        transitionId: 4,
+        transitionId: 5,
         chunks: [{ id: "chunk-a", status: "escalated", reviewAttempts: 0 }],
       });
       await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).resolves.toBe("need help");
@@ -612,7 +642,7 @@ describe("RunController slice 3", () => {
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "escalated",
         activeChunkId: "chunk-a",
-        transitionId: 5,
+        transitionId: 6,
         chunks: [{ id: "chunk-a", status: "escalated", reviewAttempts: 0 }],
       });
       await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).resolves.toBe(reviewerResponse({
@@ -638,7 +668,7 @@ describe("RunController slice 3", () => {
       );
 
       await expect(controller.start()).rejects.toThrow("Invalid developer output");
-      await expect(store.loadState()).resolves.toEqual(initialState);
+      await expect(store.loadState()).resolves.toEqual({ ...initialState, transitionId: initialState.transitionId + 1 });
       await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).rejects.toThrow();
     });
   });
@@ -729,7 +759,7 @@ describe("RunController slice 3", () => {
       );
 
       await expect(controller.start()).rejects.toThrow("Invalid reviewer output");
-      await expect(store.loadState()).resolves.toEqual(initialState);
+      await expect(store.loadState()).resolves.toEqual({ ...initialState, transitionId: initialState.transitionId + 1 });
       await expect(readFile(reviewPath(workspace, "run-1", "chunk-a", 1), "utf8")).rejects.toThrow();
     });
   });
@@ -769,7 +799,7 @@ describe("RunController slice 4", () => {
 
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "completed",
-        transitionId: 5,
+        transitionId: 8,
         chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 0 }],
       });
       expect(approvedSpecification).toBe(specification);
@@ -919,7 +949,7 @@ describe("RunController slice 4", () => {
 
       await expect(store.loadState()).resolves.toMatchObject({
         phase: "completed",
-        transitionId: 8,
+        transitionId: 10,
         chunks: [{ id: "chunk-a", status: "approved", reviewAttempts: 1 }],
       });
       expect(agent.calls.map(({ role }) => role)).toEqual(["developer", "reviewer"]);
@@ -929,6 +959,217 @@ describe("RunController slice 4", () => {
 });
 
 describe("RunController slice 5", () => {
+  it.each(["architect", "planner", "developer", "reviewer"] as const)("persists a dispatching transition with role and handoff digest before the %s prompt", async (role) => {
+    await withTempDir(async (workspace) => {
+      const runId = "run-1";
+
+      if (role === "architect") {
+        const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+        const controller = new RunController({
+          artifactStore: store,
+          policy: defaultPolicy,
+          roleAgent: {
+            prompt: async (askedRole, handoff) => {
+              expect(askedRole).toBe("architect");
+              expect(handoff).toBe("");
+              await expectLastDispatchTransition(workspace, "architect", "", ["dispatching"], 1);
+              return JSON.stringify({ specification: "# Spec\n" });
+            },
+          },
+          ui: createUi({ approved: false }),
+        });
+
+        await controller.start();
+        return;
+      }
+
+      if (role === "planner") {
+        const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+        await store.writeText("specification.md", "# Spec\n");
+        await store.writeJson("state.json", planningState(runId, workspace));
+        const controller = new RunController({
+          artifactStore: store,
+          policy: defaultPolicy,
+          roleAgent: {
+            prompt: async (askedRole, handoff) => {
+              if (askedRole !== "planner") {
+                throw new Error("stop after planner");
+              }
+
+              expect(handoff).toBe("# Spec\n");
+              await expectLastDispatchTransition(workspace, "planner", "# Spec\n", ["dispatching"], 3);
+              return planResponse(chunkDefinition("chunk-a"));
+            },
+          },
+          ui: createUi(),
+        });
+
+        await expect(controller.start()).rejects.toThrow("stop after planner");
+        return;
+      }
+
+      if (role === "developer") {
+        const controllerState = executionState(runId, workspace, "developing");
+        const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+        const handoff = joinHandoff("# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a")));
+        await Promise.all([
+          store.writeText("specification.md", "# Spec\n"),
+          store.writeText("plan.md", planResponse(chunkDefinition("chunk-a"))),
+          store.writeText("chunks/chunk-a/definition.md", JSON.stringify(chunkDefinition("chunk-a"))),
+          store.writeJson("state.json", controllerState),
+        ]);
+        const controller = new RunController({
+          artifactStore: store,
+          policy: defaultPolicy,
+          roleAgent: {
+            prompt: async (askedRole, promptHandoff) => {
+              if (askedRole !== "developer") {
+                throw new Error("stop after developer");
+              }
+
+              expect(promptHandoff).toBe(handoff);
+              await expectLastDispatchTransition(workspace, "developer", handoff, ["dispatching"], 4);
+              return JSON.stringify({ report: "implemented", deviated: false });
+            },
+          },
+          ui: createUi(),
+        });
+
+        await expect(controller.start()).rejects.toThrow("stop after developer");
+        return;
+      }
+
+      const controllerState = executionState(runId, workspace, "reviewing");
+      const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+      const review = "implemented";
+      const handoff = joinHandoff("# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a")), review);
+      await Promise.all([
+        store.writeText("specification.md", "# Spec\n"),
+        store.writeText("plan.md", planResponse(chunkDefinition("chunk-a"))),
+        store.writeText("chunks/chunk-a/definition.md", JSON.stringify(chunkDefinition("chunk-a"))),
+        store.writeText("chunks/chunk-a/implementation-report.md", review),
+        store.writeJson("state.json", controllerState),
+      ]);
+      const controller = new RunController({
+        artifactStore: store,
+        policy: defaultPolicy,
+        roleAgent: {
+          prompt: async (askedRole, promptHandoff) => {
+            expect(askedRole).toBe("reviewer");
+            expect(promptHandoff).toBe(handoff);
+            await expectLastDispatchTransition(workspace, "reviewer", handoff, ["dispatching"], 5);
+            return reviewerResponse();
+          },
+        },
+        ui: createUi(),
+      });
+
+      await controller.start();
+    });
+  });
+
+  it.each([
+    ["architect", "What scope?", "focus the spec", 1, JSON.stringify({ specification: "# Spec\n" }), "", "focus the spec"],
+    ["planner", "Which chunks?", "one chunk", 3, planResponse(chunkDefinition("chunk-a")), "# Spec\n", joinHandoff("# Spec\n", "one chunk")],
+    [
+      "developer",
+      "What implementation detail?",
+      "keep it small",
+      4,
+      JSON.stringify({ report: "implemented", deviated: false }),
+      joinHandoff("# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a"))),
+      joinHandoff("# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a")), "keep it small"),
+    ],
+    [
+      "reviewer",
+      "Anything unclear?",
+      "all clear",
+      5,
+      reviewerResponse(),
+      joinHandoff("# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a")), "implemented"),
+      joinHandoff("# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a")), "implemented", "all clear"),
+    ],
+  ] as const)("persists dispatching transitions before %s retry prompts", async (role, question, answer, firstDispatchId, finalResponse, initialHandoff, retryHandoff) => {
+    await withTempDir(async (workspace) => {
+      const runId = "run-1";
+      let promptCount = 0;
+      const roleAgent = {
+        prompt: async (askedRole: Role, handoff: string): Promise<string> => {
+          if (askedRole !== role) {
+            throw new Error(`stop after ${role}`);
+          }
+
+          promptCount += 1;
+          const expectedHandoff = promptCount === 1 ? initialHandoff : retryHandoff;
+          const expectedTransitionTypes = promptCount === 1
+            ? ["dispatching"]
+            : ["dispatching", "question-asked", "question-answered", "dispatching"];
+          const expectedTransitionId = promptCount === 1 ? firstDispatchId : firstDispatchId + 3;
+
+          expect(handoff).toBe(expectedHandoff);
+          await expectLastDispatchTransition(workspace, role, expectedHandoff, expectedTransitionTypes, expectedTransitionId);
+          return promptCount === 1 ? roleQuestionResponse(question) : finalResponse;
+        },
+      };
+      const ui = createUi({
+        approved: role === "architect" ? false : true,
+        askQuestion: async (askedRole, askedQuestion) => {
+          expect(askedRole).toBe(role);
+          expect(askedQuestion).toBe(question);
+          await expect(readFile(questionPath(workspace, runId, 1), "utf8")).resolves.toBe(JSON.stringify({ role, question }));
+          return answer;
+        },
+      });
+
+      if (role === "architect") {
+        const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+        const controller = new RunController({ artifactStore: store, policy: defaultPolicy, roleAgent, ui });
+
+        await controller.start();
+        expect(promptCount).toBe(2);
+        return;
+      }
+
+      if (role === "planner") {
+        const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+        await store.writeText("specification.md", "# Spec\n");
+        await store.writeJson("state.json", planningState(runId, workspace));
+        const controller = new RunController({ artifactStore: store, policy: defaultPolicy, roleAgent, ui });
+
+        await expect(controller.start()).rejects.toThrow("stop after planner");
+        expect(promptCount).toBe(2);
+        return;
+      }
+
+      if (role === "developer") {
+        const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
+        await Promise.all([
+          store.writeText("specification.md", "# Spec\n"),
+          store.writeText("plan.md", planResponse(chunkDefinition("chunk-a"))),
+          store.writeText("chunks/chunk-a/definition.md", JSON.stringify(chunkDefinition("chunk-a"))),
+          store.writeJson("state.json", executionState(runId, workspace, "developing")),
+        ]);
+        const controller = new RunController({ artifactStore: store, policy: defaultPolicy, roleAgent, ui });
+
+        await expect(controller.start()).rejects.toThrow("stop after developer");
+        expect(promptCount).toBe(2);
+        return;
+      }
+
+      const { store } = await createExecutionController(
+        workspace,
+        executionState(runId, workspace, "reviewing"),
+        {},
+        "implemented",
+        ui,
+      );
+      const controller = new RunController({ artifactStore: store, policy: defaultPolicy, roleAgent, ui });
+
+      await controller.start();
+      expect(promptCount).toBe(2);
+    });
+  });
+
   it("resumes from a durable pending developer question without dispatching before the answer and retries the same role once", async () => {
     await withTempDir(async (workspace) => {
       const handoff = ["# Spec\n", planResponse(chunkDefinition("chunk-a")), JSON.stringify(chunkDefinition("chunk-a"))].join("\n\n---\n\n");
@@ -1032,7 +1273,7 @@ describe("RunController slice 5", () => {
             if (role === "developer") {
               expect(JSON.parse(await readFile(join(runRoot(workspace, "run-1"), "state.json"), "utf8"))).toMatchObject({
                 phase: "developing",
-                transitionId: 5,
+                transitionId: 6,
                 pendingQuestion: {
                   role: "developer",
                   question: "Need one detail?",
