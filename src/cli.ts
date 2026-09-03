@@ -263,7 +263,7 @@ const startRun = async (
   command: Extract<Command, { type: "start" }>,
   dependencies: MainDependencies,
 ): Promise<number> => {
-  await dependencies.validatePiVersion();
+  await validateInput(() => dependencies.validatePiVersion());
   const io = dependencies.createTerminalIo();
   const ui = new TerminalRunUi(io);
   const presets = await validateInput(() => dependencies.presetStore.list(command.workspace));
@@ -292,7 +292,7 @@ const resumeRun = async (
   command: Extract<Command, { type: "resume" }>,
   dependencies: MainDependencies,
 ): Promise<number> => {
-  await dependencies.validatePiVersion();
+  await validateInput(() => dependencies.validatePiVersion());
   const artifactStore = await validateInput(() => ArtifactStore.open(command.workspace, command.runId));
   const policy = await loadPersistedPolicy(command.workspace, command.runId);
   const catalog = await dependencies.loadAvailableModels(policy.roles.architect.model);

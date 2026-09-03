@@ -294,7 +294,7 @@ describe("main", () => {
         validatePiVersion: async () => { throw new Error("Unsupported Pi version: 0.0.0"); },
       });
 
-      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(2);
       expect(dependencies.roleAgent.closed()).toBe(0);
     });
   });
@@ -354,7 +354,7 @@ describe("main", () => {
         workspaceManager: { prepare: async () => { prepares += 1; return workspace; } },
       });
 
-      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(2);
       expect(prepares).toBe(0);
     });
   });
