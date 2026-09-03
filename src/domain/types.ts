@@ -69,6 +69,7 @@ export interface RunState {
 }
 
 export type Transition =
+  | { readonly type: "dispatching"; readonly role: Role }
   | { readonly type: "specification-created" }
   | { readonly type: "specification-approved" }
   | { readonly type: "plan-created"; readonly chunks: ReadonlyArray<ChunkState> }

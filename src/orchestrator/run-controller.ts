@@ -530,6 +530,13 @@ export class RunController {
     return { state: next, answer };
   }
 
+  private async dispatch(role: Role, handoff: string, state: RunState): Promise<{ state: RunState; output: string }> {
+    const next = applyTransition(state, { type: "dispatching", role }, this.deps.policy);
+    await this.deps.artifactStore.appendTransition({ type: "dispatching", role }, next);
+
+    return { state: next, output: await this.deps.roleAgent.prompt(role, handoff) };
+  }
+
   private async promptRoleWithQuestionRetry<T>(
     state: RunState,
     role: Role,
@@ -547,8 +554,9 @@ export class RunController {
     }
 
     while (true) {
-      const output = await this.deps.roleAgent.prompt(role, nextHandoff);
-      const question = parseRoleQuestion(output);
+      const dispatched = await this.dispatch(role, nextHandoff, currentState);
+      currentState = dispatched.state;
+      const question = parseRoleQuestion(dispatched.output);
 
       if (question !== undefined) {
         const nextIndex = Math.max(0, ...await listQuestionIndexes(this.deps.artifactStore)) + 1;
@@ -568,7 +576,7 @@ export class RunController {
         continue;
       }
 
-      return { state: currentState, value: parseOutput(output) };
+      return { state: currentState, value: parseOutput(dispatched.output) };
     }
   }
 
