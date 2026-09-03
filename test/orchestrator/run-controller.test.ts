@@ -665,6 +665,27 @@ describe("RunController slice 3", () => {
     });
   });
 
+  it("reloads a persisted snapshot after restart before reviewer dispatch", async () => {
+    await withTempDir(async (workspace) => {
+      const state = executionState("run-1", workspace, "reviewing");
+      const { agent, controller, store } = await createExecutionController(
+        workspace,
+        state,
+        { reviewer: [reviewerResponse()] },
+        "implemented",
+        createUi(),
+        {
+          capture: async () => ({ ignored: true }),
+          assertUnchanged: async () => { throw new ExternalWorkspaceChange(workspace); },
+        },
+      );
+      await store.writeJson("chunks/chunk-a/workspace-snapshot.json", { before: "developer" });
+
+      await expect(controller.resume()).resolves.toMatchObject({ phase: "escalated" });
+      expect(agent.calls).toEqual([]);
+    });
+  });
+
   it("escalates without reviewer dispatch when metadata workspace changes", async () => {
     await withTempDir(async (workspace) => {
       const state = executionState("run-1", workspace, "developing");
