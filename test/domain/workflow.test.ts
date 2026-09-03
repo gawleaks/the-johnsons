@@ -96,6 +96,15 @@ describe("applyTransition", () => {
     expect(Object.prototype.hasOwnProperty.call(next, "pendingQuestion")).toBe(false);
   });
 
+  it("increments transitionId for dispatching without changing phase", () => {
+    const state = withState({ phase: "planning" });
+
+    const next = applyTransition(state, { type: "dispatching", role: "planner", handoffDigest: "digest" }, policy);
+
+    expect(next.phase).toBe("planning");
+    expect(next.transitionId).toBe(state.transitionId + 1);
+  });
+
   it("requires explicit specification approval before planning", () => {
     const state = withState({ phase: "awaiting-spec-approval" });
 

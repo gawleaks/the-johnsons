@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { applyTransition } from "../domain/workflow.js";
 import type {
@@ -179,6 +180,7 @@ const questionsPath = "questions";
 const questionArtifactPath = (index: number): string => join(questionsPath, `${index.toString().padStart(4, "0")}.json`);
 const appendAnswerToHandoff = (handoff: string, answer: string): string =>
   handoff === "" ? answer : [handoff, answer].join("\n\n---\n\n");
+const handoffDigest = (handoff: string): string => createHash("sha256").update(handoff).digest("hex");
 
 const parseRoleQuestion = (output: string): string | undefined => {
   let parsed: unknown;
@@ -531,8 +533,9 @@ export class RunController {
   }
 
   private async dispatch(role: Role, handoff: string, state: RunState): Promise<{ state: RunState; output: string }> {
-    const next = applyTransition(state, { type: "dispatching", role }, this.deps.policy);
-    await this.deps.artifactStore.appendTransition({ type: "dispatching", role }, next);
+    const transition = { type: "dispatching", role, handoffDigest: handoffDigest(handoff) } as const;
+    const next = applyTransition(state, transition, this.deps.policy);
+    await this.deps.artifactStore.appendTransition(transition, next);
 
     return { state: next, output: await this.deps.roleAgent.prompt(role, handoff) };
   }
