@@ -291,7 +291,7 @@ describe("main", () => {
   it("validates Pi version before opening a resumed run", async () => {
     await withTempDir(async (workspace) => {
       const dependencies = createDependencies(workspace, {
-        validatePiVersion: async () => { throw new Error("Unsupported Pi version: 0.0.0"); },
+        validatePiVersion: async () => validatePiVersion("0.0.0"),
       });
 
       await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(2);
@@ -350,12 +350,22 @@ describe("main", () => {
     await withTempDir(async (workspace) => {
       let prepares = 0;
       const dependencies = createDependencies(workspace, {
-        validatePiVersion: async () => { throw new Error("Unsupported Pi version: 0.0.0"); },
+        validatePiVersion: async () => validatePiVersion("0.0.0"),
         workspaceManager: { prepare: async () => { prepares += 1; return workspace; } },
       });
 
       await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(2);
       expect(prepares).toBe(0);
+    });
+  });
+
+  it("returns 1 when Pi version validation cannot launch", async () => {
+    await withTempDir(async (workspace) => {
+      const dependencies = createDependencies(workspace, {
+        validatePiVersion: async () => { throw new Error("Unable to validate Pi version"); },
+      });
+
+      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(1);
     });
   });
 
