@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { randomUUID as createRandomUuid } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -175,6 +176,15 @@ const runCommand: CommandAdapter["run"] = (command, args, cwd) =>
   });
 
 const commandAdapter: CommandAdapter = { run: runCommand };
+const supportedPiVersion = createRequire(import.meta.url)("../package.json").dependencies["@earendil-works/pi-coding-agent"] as string;
+
+export const validatePiVersion = async (version = supportedPiVersion): Promise<void> =>
+  new Promise((resolve, reject) => {
+    execFile("pi", ["--version"], (error, stdout) => {
+      if (error) return reject(new Error("Unable to validate Pi version"));
+      return stdout.trim() === version ? resolve() : reject(new Error(`Unsupported Pi version: ${stdout.trim()}`));
+    });
+  });
 
 export const workspaceSafetyFor = (mode: Policy["checkpointMode"]) =>
   mode === "metadata"
@@ -192,6 +202,7 @@ export interface MainDependencies {
   readonly createTerminalIo: () => TerminalIo;
   readonly presetStore: { list(workspace: string): Promise<Readonly<Record<string, Policy>>> };
   readonly loadAvailableModels: (model?: string) => Promise<ReadonlyArray<string>>;
+  readonly validatePiVersion: () => Promise<void>;
   readonly workspaceManager: {
     prepare(workspace: string, runId: string): Promise<string>;
     setMode?(mode: Policy["checkpointMode"]): void;
@@ -210,6 +221,7 @@ export const createProductionDependencies = (): MainDependencies => {
     createTerminalIo,
     presetStore: new PresetStore(),
     loadAvailableModels,
+    validatePiVersion,
     workspaceManager: {
       setMode: (nextMode) => {
         mode = nextMode;
@@ -251,6 +263,7 @@ const startRun = async (
   command: Extract<Command, { type: "start" }>,
   dependencies: MainDependencies,
 ): Promise<number> => {
+  await dependencies.validatePiVersion();
   const io = dependencies.createTerminalIo();
   const ui = new TerminalRunUi(io);
   const presets = await validateInput(() => dependencies.presetStore.list(command.workspace));
@@ -279,6 +292,7 @@ const resumeRun = async (
   command: Extract<Command, { type: "resume" }>,
   dependencies: MainDependencies,
 ): Promise<number> => {
+  await dependencies.validatePiVersion();
   const artifactStore = await validateInput(() => ArtifactStore.open(command.workspace, command.runId));
   const policy = await loadPersistedPolicy(command.workspace, command.runId);
   const catalog = await dependencies.loadAvailableModels(policy.roles.architect.model);

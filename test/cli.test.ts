@@ -69,6 +69,7 @@ const createDependencies = (workspace: string, overrides: Partial<MainDependenci
     presetStore: {
       list: async () => ({ default: defaultPolicy }),
     },
+    validatePiVersion: async () => undefined,
     loadAvailableModels: async () => [
       defaultPolicy.roles.architect.model,
       defaultPolicy.roles.planner.model,
@@ -324,6 +325,19 @@ describe("main", () => {
 
       await expect(main(["runs", "--workspace", workspace], dependencies)).resolves.toBe(0);
       expect(dependencies.io.lines).toEqual([]);
+    });
+  });
+
+  it("stops before workspace preparation when Pi version validation fails", async () => {
+    await withTempDir(async (workspace) => {
+      let prepares = 0;
+      const dependencies = createDependencies(workspace, {
+        validatePiVersion: async () => { throw new Error("Unsupported Pi version: 0.0.0"); },
+        workspaceManager: { prepare: async () => { prepares += 1; return workspace; } },
+      });
+
+      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      expect(prepares).toBe(0);
     });
   });
 
