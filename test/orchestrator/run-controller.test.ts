@@ -7,6 +7,7 @@ import { ArtifactStore } from "../../src/storage/artifact-store.js";
 import { defaultPolicy } from "../../src/policy/config.js";
 import { RunController } from "../../src/orchestrator/run-controller.js";
 import { createFakeAgent } from "../helpers/fake-agent.js";
+import { ExternalWorkspaceChange } from "../../src/workspace/workspace-manager.js";
 
 const tempDir = async (): Promise<string> => mkdtemp(join(tmpdir(), "johnsons-run-controller-"));
 
@@ -165,6 +166,7 @@ const createExecutionController = async (
   responses: Partial<Record<"developer" | "reviewer", ReadonlyArray<string>>>,
   implementationReport?: string,
   ui = createUi(),
+  workspaceSafety?: { capture(workspace: string): Promise<unknown>; assertUnchanged(snapshot: unknown, workspace: string): Promise<void> },
 ) => {
   const runId = "run-1";
   const store = await ArtifactStore.create(workspace, runId, createRunState(runId, workspace));
@@ -183,6 +185,7 @@ const createExecutionController = async (
     policy: defaultPolicy,
     roleAgent: agent,
     ui,
+    ...(workspaceSafety === undefined ? {} : { workspaceSafety }),
   });
 
   return { agent, controller, store };
@@ -637,6 +640,27 @@ describe("RunController slice 3", () => {
       await expect(controller.start()).rejects.toThrow("Invalid developer output");
       await expect(store.loadState()).resolves.toEqual(initialState);
       await expect(readFile(implementationReportPath(workspace, "run-1", "chunk-a"), "utf8")).rejects.toThrow();
+    });
+  });
+
+  it("escalates without reviewer dispatch when metadata workspace changes", async () => {
+    await withTempDir(async (workspace) => {
+      const state = executionState("run-1", workspace, "developing");
+      const { agent, controller, store } = await createExecutionController(
+        workspace,
+        state,
+        { developer: [JSON.stringify({ report: "implemented", deviated: false })] },
+        undefined,
+        createUi(),
+        {
+          capture: async () => ({ before: "snapshot" }),
+          assertUnchanged: async () => { throw new ExternalWorkspaceChange(workspace); },
+        },
+      );
+
+      await expect(controller.start()).resolves.toMatchObject({ phase: "escalated" });
+      expect(agent.calls.map(({ role }) => role)).toEqual(["developer"]);
+      await expect(store.loadState()).resolves.toMatchObject({ phase: "escalated" });
     });
   });
 
