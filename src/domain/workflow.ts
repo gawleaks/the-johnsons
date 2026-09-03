@@ -100,6 +100,10 @@ export function applyTransition(
   transition: Transition,
   policy: { maxReviewAttempts: number },
 ): RunState {
+  if (transition.type === "dispatching") {
+    return state;
+  }
+
   if (transition.type === "specification-created" && state.phase === "architecting") {
     return nextState(state, withAnsweredPendingQuestionCleared(state, { phase: "awaiting-spec-approval" }));
   }
