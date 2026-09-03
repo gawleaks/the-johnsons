@@ -176,6 +176,15 @@ const runCommand: CommandAdapter["run"] = (command, args, cwd) =>
 
 const commandAdapter: CommandAdapter = { run: runCommand };
 
+export const workspaceSafetyFor = (mode: Policy["checkpointMode"]) =>
+  mode === "metadata"
+    ? {
+      capture: (workspace: string) => new WorkspaceManager({ mode: "metadata" }).captureSnapshot(workspace),
+      assertUnchanged: (snapshot: unknown, workspace: string) =>
+        new WorkspaceManager({ mode: "metadata" }).assertUnchanged(snapshot as Record<string, string>, workspace),
+    }
+    : undefined;
+
 export interface MainDependencies {
   readonly env: NodeJS.ProcessEnv;
   readonly stderr: Pick<Writable, "write">;
@@ -211,18 +220,14 @@ export const createProductionDependencies = (): MainDependencies => {
       policy.roles,
       createAgentProcessFactory(join(workspace, ".johnsons", "runs", runId, "sessions"), executionWorkspace),
     ),
-    createRunController: (deps) => new RunController({
-      ...deps,
-      ...(deps.policy.checkpointMode === "metadata"
-        ? {
-          workspaceSafety: {
-            capture: (workspace: string) => new WorkspaceManager({ mode: "metadata" }).captureSnapshot(workspace),
-            assertUnchanged: (snapshot: unknown, workspace: string) =>
-              new WorkspaceManager({ mode: "metadata" }).assertUnchanged(snapshot as Record<string, string>, workspace),
-          },
-        }
-        : {}),
-    }),
+    createRunController: (deps) => {
+      const workspaceSafety = workspaceSafetyFor(deps.policy.checkpointMode);
+
+      return new RunController({
+        ...deps,
+        ...(workspaceSafety === undefined ? {} : { workspaceSafety }),
+      });
+    },
   };
 };
 
