@@ -109,8 +109,7 @@ const handlePrompt = (promptId) => {
   }
 
   if (scenario === "malformed") {
-    process.stdout.write("{not json}\n");
-    process.exit(0);
+    process.stdout.write("{not json}\n", () => process.exit(0));
     return;
   }
 
