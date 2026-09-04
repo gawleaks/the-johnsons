@@ -122,7 +122,8 @@ const loadPersistedPresetsOrEmpty = async (workspace: string): Promise<Record<st
 export class PresetStore implements PresetStore {
   async list(workspace: string): Promise<Readonly<Record<string, Policy>>> {
     try {
-      return await loadPersistedPresets(workspace);
+      const presets = await loadPersistedPresets(workspace);
+      return Object.keys(presets).length === 0 ? { default: defaultPolicy } : presets;
     } catch (error) {
       if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
         return { default: defaultPolicy };
