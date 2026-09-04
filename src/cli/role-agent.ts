@@ -67,6 +67,7 @@ export const createAgentProcessFactory = (
       sessionDir: join(sessionDir, role),
       name: `${name}-${role}`,
       model: config.model,
+      thinking: config.thinking,
       tools: config.tools,
       cwd,
       timeoutMs: config.timeoutMs,

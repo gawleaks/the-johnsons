@@ -21,6 +21,7 @@ export interface PiRpcAgentProcessOptions {
   readonly sessionDir: string;
   readonly name: string;
   readonly model: string;
+  readonly thinking: "off" | "low" | "medium" | "high" | "max";
   readonly tools: ReadonlyArray<string>;
   readonly cwd?: string | undefined;
   readonly timeoutMs?: number;
@@ -139,6 +140,8 @@ export class PiRpcAgentProcess implements AgentProcess {
         this.#options.name,
         "--model",
         this.#options.model,
+        "--thinking",
+        this.#options.thinking,
         "--tools",
         this.#options.tools.join(","),
       ],
