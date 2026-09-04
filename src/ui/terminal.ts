@@ -133,4 +133,11 @@ export class TerminalRunUi implements RunUi {
   async resolveEscalation(): Promise<boolean> {
     return this.io.confirm("Reviewer escalation", "Resume after escalation?");
   }
+
+  async approveReviewException(report: string): Promise<string | undefined> {
+    this.io.write(report);
+    if (!await this.io.confirm("Reviewer exception", "Approve this exception?")) return undefined;
+    const reason = await this.io.ask("Required exception rationale");
+    return reason.trim() === "" ? undefined : reason;
+  }
 }

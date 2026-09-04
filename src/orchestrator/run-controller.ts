@@ -23,6 +23,7 @@ export interface RunUi {
   approveSpecification(specification: string): Promise<boolean>;
   askQuestion(role: Role, question: string): Promise<string>;
   resolveEscalation(): Promise<boolean>;
+  approveReviewException?(report: string): Promise<string | undefined>;
 }
 
 export interface RunControllerDeps {
@@ -303,7 +304,7 @@ const isApprovalSatisfied = (review: ReviewerOutput, chunk: ChunkDefinition): bo
   && hasExactAcceptancePasses(review.acceptanceCriteria, chunk.acceptanceCriteria.map(({ id }) => id))
   && hasExactCheckPasses(review.checks, chunk.requiredChecks);
 
-const parseReviewerOutput = (output: string, chunk: ChunkDefinition): { readonly verdict: ReviewVerdict; readonly report: string } => {
+const parseReviewerOutput = (output: string, chunk: ChunkDefinition): { readonly verdict: ReviewVerdict; readonly report: string; readonly approvalSatisfied: boolean } => {
   let parsed: unknown;
 
   try {
@@ -401,11 +402,7 @@ const parseReviewerOutput = (output: string, chunk: ChunkDefinition): { readonly
     checks,
   } satisfies ReviewerOutput;
 
-  if (review.verdict === "approved" && !isApprovalSatisfied(review, chunk)) {
-    throw new Error("Invalid reviewer output");
-  }
-
-  return { verdict: review.verdict, report: output };
+  return { verdict: review.verdict, report: output, approvalSatisfied: isApprovalSatisfied(review, chunk) };
 };
 
 const listQuestionIndexes = async (artifactStore: ArtifactStore): Promise<ReadonlyArray<number>> => {
@@ -724,7 +721,16 @@ export class RunController {
       { specification, plan, chunk, review },
       (output) => parseReviewerOutput(output, parseChunkDefinition(JSON.parse(chunk))),
     );
-    const { verdict, report } = reviewResult.value;
+    const { report } = reviewResult.value;
+    if (reviewResult.value.verdict === "approved" && !reviewResult.value.approvalSatisfied && !this.deps.ui.approveReviewException) {
+      throw new Error("Invalid reviewer output");
+    }
+    const exceptionReason = reviewResult.value.verdict === "approved" && !reviewResult.value.approvalSatisfied
+      ? await this.deps.ui.approveReviewException?.(report)
+      : undefined;
+    const verdict = reviewResult.value.verdict === "approved" && !reviewResult.value.approvalSatisfied
+      ? exceptionReason === undefined ? "rejected" : "approved"
+      : reviewResult.value.verdict;
     const attempt = state.chunks.find(({ id }) => id === chunkId)?.reviewAttempts;
 
     if (attempt === undefined) {
@@ -732,6 +738,12 @@ export class RunController {
     }
 
     await this.deps.artifactStore.writeText(reviewArtifactPath(chunkId, attempt + 1), report);
+    if (exceptionReason !== undefined) {
+      await this.deps.artifactStore.writeJson(join("chunks", chunkId, `review-exception-${attempt + 1}.json`), {
+        review: report,
+        reason: exceptionReason,
+      });
+    }
 
     const next = applyTransition(reviewResult.state, { type: "reviewed", verdict }, this.deps.policy);
     await this.deps.artifactStore.appendTransition({ type: "reviewed", verdict }, next);
