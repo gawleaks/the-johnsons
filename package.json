@@ -10,6 +10,7 @@
     "build": "tsc -p tsconfig.json && node -e \"const {cpSync, copyFileSync, writeFileSync} = require('node:fs'); cpSync('test/helpers', 'dist/test/helpers', { recursive: true }); copyFileSync('package.json', 'dist/package.json'); writeFileSync('dist/cli.js', '#!/usr/bin/env node\\nimport { main, createProductionDependencies } from \\\"./src/cli.js\\\";\\nvoid main(process.argv.slice(2), createProductionDependencies()).then((code) => { process.exitCode = code; });\\n');\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
+    "smoke:pi": "JOHNSONS_REAL_PI_SMOKE=1 vitest run test/real-pi-smoke.test.ts",
     "dev": "tsx src/cli.ts"
   },
   "engines": {
