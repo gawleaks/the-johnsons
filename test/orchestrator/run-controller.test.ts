@@ -118,6 +118,7 @@ const createUi = (options: {
   onApproveSpecification?: ((specification: string) => void) | undefined;
   askQuestion?: ((role: "architect" | "planner" | "developer" | "reviewer", question: string) => Promise<string>) | undefined;
   resolveEscalation?: (() => Promise<boolean>) | undefined;
+  approveReviewException?: ((report: string) => Promise<string | undefined>) | undefined;
 } = {}) => ({
   approveSpecification: async (specification: string) => {
     options.onApproveSpecification?.(specification);
@@ -125,6 +126,7 @@ const createUi = (options: {
   },
   askQuestion: options.askQuestion ?? (async () => "unused"),
   resolveEscalation: options.resolveEscalation ?? (async () => true),
+  ...(options.approveReviewException === undefined ? {} : { approveReviewException: options.approveReviewException }),
 });
 
 const createController = async (
@@ -713,6 +715,33 @@ describe("RunController slice 3", () => {
 
       await expect(controller.resume()).resolves.toMatchObject({ phase: "escalated" });
       expect(agent.calls).toEqual([]);
+    });
+  });
+
+  it("approves incomplete reviewer evidence only with a persisted exception rationale", async () => {
+    await withTempDir(async (workspace) => {
+      const state = executionState("run-1", workspace, "reviewing");
+      const incomplete = reviewerResponse({
+        acceptanceCriteria: [{ id: "AC-1", status: "fail" }],
+      });
+      const { controller, store } = await createExecutionController(
+        workspace,
+        state,
+        { reviewer: [incomplete] },
+        "implemented",
+        createUi({
+          approveReviewException: async (report) => {
+            expect(report).toBe(incomplete);
+            return "Known test-environment limitation";
+          },
+        }),
+      );
+
+      await expect(controller.start()).resolves.toMatchObject({ phase: "completed" });
+      await expect(store.readText("chunks/chunk-a/review-exception-1.json")).resolves.toBe(JSON.stringify({
+        review: incomplete,
+        reason: "Known test-environment limitation",
+      }));
     });
   });
 
