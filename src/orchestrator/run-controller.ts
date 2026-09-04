@@ -663,11 +663,6 @@ export class RunController {
     const plan = await this.deps.artifactStore.readText("plan.md");
     const chunkId = activeChunkId(state);
     const chunk = await this.deps.artifactStore.readText(chunkDefinitionPath(chunkId));
-    const snapshot = this.deps.workspaceSafety && await this.deps.workspaceSafety.capture(state.workspace);
-    if (snapshot !== undefined) {
-      this.#snapshots.set(chunkId, snapshot);
-      await this.deps.artifactStore.writeJson(workspaceSnapshotPath(chunkId), snapshot);
-    }
     const developmentResult = await this.promptRoleWithQuestionRetry(
       state,
       "developer",
@@ -675,6 +670,11 @@ export class RunController {
       parseDeveloperOutput,
     );
     const { report, deviated } = developmentResult.value;
+    const snapshot = this.deps.workspaceSafety && await this.deps.workspaceSafety.capture(state.workspace);
+    if (snapshot !== undefined) {
+      this.#snapshots.set(chunkId, snapshot);
+      await this.deps.artifactStore.writeJson(workspaceSnapshotPath(chunkId), snapshot);
+    }
 
     await this.deps.artifactStore.writeText(implementationReportPath(chunkId), report);
 
