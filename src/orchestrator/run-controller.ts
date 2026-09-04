@@ -728,8 +728,9 @@ export class RunController {
     const exceptionReason = reviewResult.value.verdict === "approved" && !reviewResult.value.approvalSatisfied
       ? await this.deps.ui.approveReviewException?.(report)
       : undefined;
+    const validExceptionReason = exceptionReason?.trim();
     const verdict = reviewResult.value.verdict === "approved" && !reviewResult.value.approvalSatisfied
-      ? exceptionReason === undefined ? "rejected" : "approved"
+      ? validExceptionReason === undefined || validExceptionReason === "" ? "rejected" : "approved"
       : reviewResult.value.verdict;
     const attempt = state.chunks.find(({ id }) => id === chunkId)?.reviewAttempts;
 
@@ -738,10 +739,10 @@ export class RunController {
     }
 
     await this.deps.artifactStore.writeText(reviewArtifactPath(chunkId, attempt + 1), report);
-    if (exceptionReason !== undefined) {
+    if (validExceptionReason !== undefined && validExceptionReason !== "") {
       await this.deps.artifactStore.writeJson(join("chunks", chunkId, `review-exception-${attempt + 1}.json`), {
         review: report,
-        reason: exceptionReason,
+        reason: validExceptionReason,
       });
     }
 
