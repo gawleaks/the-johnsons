@@ -128,12 +128,12 @@ describe("PresetStore", () => {
     });
   });
 
-  it("loads an existing empty preset file as empty", async () => {
+  it("falls back to the default preset when an existing preset file is empty", async () => {
     await withTempDir(async (workspace) => {
       await mkdir(join(workspace, ".johnsons"), { recursive: true });
       await writeFile(presetPath(workspace), "{}", "utf8");
 
-      await expect(store().list(workspace)).resolves.toEqual({});
+      await expect(store().list(workspace)).resolves.toEqual({ default: defaultPolicy });
     });
   });
 
