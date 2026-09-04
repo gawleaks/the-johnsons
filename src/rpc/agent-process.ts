@@ -21,6 +21,7 @@ export interface PiRpcAgentProcessOptions {
   readonly sessionDir: string;
   readonly name: string;
   readonly model: string;
+  readonly tools?: ReadonlyArray<string> | undefined;
   readonly cwd?: string | undefined;
   readonly timeoutMs?: number;
   readonly abortGraceMs?: number;
@@ -138,6 +139,7 @@ export class PiRpcAgentProcess implements AgentProcess {
         this.#options.name,
         "--model",
         this.#options.model,
+        ...(this.#options.tools === undefined ? [] : ["--tools", this.#options.tools.join(",")]),
       ],
       { cwd: this.#options.cwd, stdio: ["pipe", "pipe", "pipe"] },
     );
