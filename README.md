@@ -18,6 +18,16 @@ pi auth login
 
 The CLI uses your existing Pi auth. It does not accept secrets on the command line and should not store provider credentials in presets, env files committed to the repo, or run artifacts.
 
+## Real Pi smoke test
+
+This is opt-in and uses your local Pi authentication. Supply a configured model explicitly:
+
+```bash
+JOHNSONS_REAL_PI_MODEL=provider/model npm run smoke:pi
+```
+
+It sends a minimal prompt to Pi RPC and creates only a temporary session directory.
+
 ## Commands
 
 ```bash
