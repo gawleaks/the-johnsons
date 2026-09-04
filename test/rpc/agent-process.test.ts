@@ -57,6 +57,7 @@ const createProcess = (root: string, cwd?: string) =>
     sessionDir: join(root, "session"),
     name: "demo-run",
     model: "demo/model",
+    tools: ["read"],
     cwd,
     timeoutMs: 80,
     abortGraceMs: 20,
@@ -180,6 +181,7 @@ describe("PiRpcAgentProcess", () => {
         sessionDir: join(root, "session"),
         name: "demo-run",
         model: "demo/model",
+        tools: ["read"],
         timeoutMs: 80,
         abortGraceMs: 500,
       });
@@ -325,6 +327,8 @@ describe("PiRpcAgentProcess", () => {
           "demo-run",
           "--model",
           "demo/model",
+          "--tools",
+          "read",
         ],
         cwd: undefined,
       });
