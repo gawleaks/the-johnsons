@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { atomicWrite } from "../storage/files.js";
-import { defaultPolicy, validatePolicy, type Policy, type RoleConfig, type ThinkingLevel } from "../policy/config.js";
+import { validatePolicy, type Policy, type RoleConfig, type ThinkingLevel } from "../policy/config.js";
 
 export interface PresetStore {
   list(workspace: string): Promise<Readonly<Record<string, Policy>>>;
@@ -121,16 +121,19 @@ const loadPersistedPresetsOrEmpty = async (workspace: string): Promise<Record<st
 
 export class PresetStore implements PresetStore {
   async list(workspace: string): Promise<Readonly<Record<string, Policy>>> {
+    let presets: Record<string, Policy>;
     try {
-      const presets = await loadPersistedPresets(workspace);
-      return Object.keys(presets).length === 0 ? { default: defaultPolicy } : presets;
+      presets = await loadPersistedPresets(workspace);
     } catch (error) {
       if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { default: defaultPolicy };
+        throw new Error("No local presets. Run `the-johnsons config --workspace <path>` first.");
       }
-
       throw error;
     }
+    if (Object.keys(presets).length === 0) {
+      throw new Error("No local presets. Run `the-johnsons config --workspace <path>` first.");
+    }
+    return presets;
   }
 
   async save(workspace: string, name: string, policy: Policy): Promise<void> {

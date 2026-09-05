@@ -20,6 +20,17 @@ const roles = ["architect", "planner", "developer", "reviewer"] as const;
 const checkpointModes = new Set<Policy["checkpointMode"]>(["metadata", "git"]);
 const thinkingLevels = new Set<ThinkingLevel>(["off", "low", "medium", "high", "max"]);
 const policyKeys = ["maxReviewAttempts", "checkpointMode", "roles", "requiredChecks"] as const;
+const localPolicyTemplate: Policy = {
+  maxReviewAttempts: 2,
+  checkpointMode: "metadata",
+  roles: {
+    architect: { model: "", thinking: "max", tools: ["read"], timeoutMs: 30_000 },
+    planner: { model: "", thinking: "high", tools: ["read"], timeoutMs: 30_000 },
+    developer: { model: "", thinking: "high", tools: ["read", "write", "bash"], timeoutMs: 30_000 },
+    reviewer: { model: "", thinking: "high", tools: ["read", "ls"], timeoutMs: 30_000 },
+  },
+  requiredChecks: [],
+};
 const roleKeys = ["model", "thinking", "tools", "timeoutMs"] as const;
 
 const policyPath = (workspace: string, runId: string): string =>
@@ -209,7 +220,7 @@ export interface MainDependencies {
   readonly stderr: Pick<Writable, "write">;
   readonly randomUUID: () => string;
   readonly createTerminalIo: () => TerminalIo;
-  readonly presetStore: { list(workspace: string): Promise<Readonly<Record<string, Policy>>> };
+  readonly presetStore: { list(workspace: string): Promise<Readonly<Record<string, Policy>>>; save?(workspace: string, name: string, policy: Policy): Promise<void> }; 
   readonly loadAvailableModels: (model?: string) => Promise<ReadonlyArray<string>>;
   readonly validatePiVersion: () => Promise<void>;
   readonly workspaceManager: {
@@ -277,6 +288,16 @@ const validateInput = async <T>(operation: () => Promise<T> | T): Promise<T> => 
   }
 };
 
+const configure = async (command: Extract<Command, { type: "config" }>, dependencies: MainDependencies): Promise<number> => {
+  const io = dependencies.createTerminalIo();
+  const { policy } = await selectPolicy(io, { default: localPolicyTemplate });
+  const save = dependencies.presetStore.save;
+  if (save === undefined) throw new Error("Preset saving is unavailable");
+  await validateInput(() => save(command.workspace, "default", validatePolicy(policy)));
+  io.write(`Saved local preset: ${join(command.workspace, ".johnsons", "presets.json")}`);
+  return 0;
+};
+
 const startRun = async (
   command: Extract<Command, { type: "start" }>,
   dependencies: MainDependencies,
@@ -330,6 +351,8 @@ const resumeRun = async (
 export const main = async (argv: readonly string[], dependencies: MainDependencies): Promise<number> => {
   try {
     const command = parseCliCommand(argv);
+
+    if (command.type === "config") return configure(command, dependencies);
 
     if (command.type === "runs") {
       await listRuns(command.workspace, dependencies.createTerminalIo());

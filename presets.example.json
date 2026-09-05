@@ -1,0 +1,13 @@
+{
+  "default": {
+    "maxReviewAttempts": 2,
+    "checkpointMode": "metadata",
+    "roles": {
+      "architect": { "model": "provider/model", "thinking": "max", "tools": ["read"], "timeoutMs": 30000 },
+      "planner": { "model": "provider/model", "thinking": "high", "tools": ["read"], "timeoutMs": 30000 },
+      "developer": { "model": "provider/model", "thinking": "high", "tools": ["read", "write", "bash"], "timeoutMs": 30000 },
+      "reviewer": { "model": "provider/model", "thinking": "high", "tools": ["read", "ls"], "timeoutMs": 30000 }
+    },
+    "requiredChecks": []
+  }
+}
