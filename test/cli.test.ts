@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { createProductionDependencies, main, validatePiVersion, workspaceSafetyFor } from "../src/cli.js";
+import { createProductionDependencies, isCompatiblePiVersion, main, validatePiVersion, workspaceSafetyFor } from "../src/cli.js";
 import { createRunState, type Role, type RunState } from "../src/domain/types.js";
 import { defaultPolicy, type Policy } from "../src/policy/config.js";
 import { ArtifactStore } from "../src/storage/artifact-store.js";
@@ -95,6 +95,12 @@ const createDependencies = (workspace: string, overrides: Partial<MainDependenci
 };
 
 describe("validatePiVersion", () => {
+  it("accepts patch differences within the expected major/minor", () => {
+    expect(isCompatiblePiVersion("0.81.1", "0.81.99")).toBe(true);
+    expect(isCompatiblePiVersion("0.81.1", "0.82.0")).toBe(false);
+    expect(isCompatiblePiVersion("0.81.1", "1.81.1")).toBe(false);
+  });
+
   it("accepts the package-pinned Pi version and rejects a mismatch", async () => {
     await expect(validatePiVersion()).resolves.toBeUndefined();
     await expect(validatePiVersion("0.0.0")).rejects.toThrow(/unsupported pi version/i);
