@@ -16,7 +16,7 @@ npm install -g @earendil-works/pi-coding-agent
 pi auth login
 ```
 
-The CLI uses your existing Pi auth. It does not accept secrets on the command line and should not store provider credentials in presets, env files committed to the repo, or run artifacts.
+The CLI uses your existing Pi auth. It does not accept secrets on the command line and should not store provider credentials in presets, env files committed to the repo, or run artifacts. At startup it requires Pi to match the package-pinned major/minor version; patch releases are compatible.
 
 ## Real Pi smoke test
 

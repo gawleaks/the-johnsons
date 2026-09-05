@@ -180,11 +180,14 @@ const runCommand: CommandAdapter["run"] = (command, args, cwd) =>
 const commandAdapter: CommandAdapter = { run: runCommand };
 const supportedPiVersion = createRequire(import.meta.url)("../package.json").dependencies["@earendil-works/pi-coding-agent"] as string;
 
+export const isCompatiblePiVersion = (expected: string, actual: string): boolean =>
+  expected.split(".").slice(0, 2).join(".") === actual.split(".").slice(0, 2).join(".");
+
 export const validatePiVersion = async (version = supportedPiVersion): Promise<void> =>
   new Promise((resolve, reject) => {
     execFile("pi", ["--version"], (error, stdout) => {
       if (error) return reject(new Error("Unable to validate Pi version"));
-      return stdout.trim() === version ? resolve() : reject(new UnsupportedPiVersionError(`Unsupported Pi version: ${stdout.trim()}`));
+      return isCompatiblePiVersion(version, stdout.trim()) ? resolve() : reject(new UnsupportedPiVersionError(`Unsupported Pi version: ${stdout.trim()}`));
     });
   });
 
