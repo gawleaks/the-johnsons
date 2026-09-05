@@ -226,6 +226,24 @@ describe("main", () => {
     });
   });
 
+  it("rejects blank local role models as validation input", async () => {
+    await withTempDir(async (workspace) => {
+      const errors: Array<string | Uint8Array> = [];
+      const dependencies = createDependencies(workspace, {
+        createTerminalIo: () => ({
+          choose: async () => "default",
+          confirm: async () => true,
+          ask: async () => "",
+          write: () => undefined,
+        }),
+        stderr: { write: (chunk) => { errors.push(chunk); return true; } },
+      });
+
+      await expect(main(["config", "--workspace", workspace], dependencies)).resolves.toBe(2);
+      expect(errors.join("")).toMatch(/model/i);
+    });
+  });
+
   it("starts a run after policy confirmation and persists its selected policy", async () => {
     await withTempDir(async (workspace) => {
       const dependencies = createDependencies(workspace);

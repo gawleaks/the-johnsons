@@ -355,7 +355,7 @@ export const main = async (argv: readonly string[], dependencies: MainDependenci
   try {
     const command = parseCliCommand(argv);
 
-    if (command.type === "config") return configure(command, dependencies);
+    if (command.type === "config") return await configure(command, dependencies);
 
     if (command.type === "runs") {
       await listRuns(command.workspace, dependencies.createTerminalIo());
