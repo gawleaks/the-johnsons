@@ -22,6 +22,10 @@ describe("parseCommand", () => {
     cwd.mockRestore();
   });
 
+  it("parses local configuration workspace", () => {
+    expect(parseCommand(["config", "--workspace", "/repo"])).toEqual({ type: "config", workspace: "/repo" });
+  });
+
   it("uses the current working directory when runs workspace is omitted", () => {
     const cwd = vi.spyOn(process, "cwd").mockReturnValue("/workspace");
 

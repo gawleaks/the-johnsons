@@ -3,13 +3,15 @@ import { resolve } from "node:path";
 export type Command =
   | { readonly type: "start"; readonly workspace: string; readonly preset?: string }
   | { readonly type: "resume"; readonly workspace: string; readonly runId: string }
-  | { readonly type: "runs"; readonly workspace: string };
+  | { readonly type: "runs"; readonly workspace: string }
+  | { readonly type: "config"; readonly workspace: string };
 
-const supportedCommands = new Set(["start", "resume", "runs"]);
+const supportedCommands = new Set(["start", "resume", "runs", "config"]);
 const knownFlags = new Set(["--workspace", "--preset"]);
 const supportedStartFlags = new Set(["--workspace", "--preset"]);
 const supportedResumeFlags = new Set(["--workspace"]);
 const supportedRunsFlags = new Set(["--workspace"]);
+const supportedConfigFlags = new Set(["--workspace"]);
 const pathLikeSegments = new Set(["", ".", ".."]);
 
 const isFlag = (value: string): boolean => value.startsWith("--");
@@ -94,6 +96,12 @@ const parseStart = (argv: readonly string[]): Command => {
   };
 };
 
+const parseConfig = (argv: readonly string[]): Command => {
+  const parsed = parseOptions(argv, supportedConfigFlags);
+  if (parsed.positional[0] !== undefined) throw new Error(`Incompatible argument: ${parsed.positional[0]}`);
+  return { type: "config", workspace: resolveWorkspace(parsed.workspace) };
+};
+
 const parseResume = (argv: readonly string[]): Command => {
   const firstPositionalIndex = argv.findIndex((token) => !isFlag(token));
 
@@ -152,6 +160,10 @@ export const parseCommand = (argv: readonly string[]): Command => {
 
   if (command === "resume") {
     return parseResume(rest);
+  }
+
+  if (command === "config") {
+    return parseConfig(rest);
   }
 
   return parseRuns(rest);

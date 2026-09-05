@@ -122,18 +122,18 @@ const invalidPolicies = {
 } as const;
 
 describe("PresetStore", () => {
-  it("returns the default preset when the file is absent", async () => {
+  it("requires local configuration when the file is absent", async () => {
     await withTempDir(async (workspace) => {
-      await expect(store().list(workspace)).resolves.toEqual({ default: defaultPolicy });
+      await expect(store().list(workspace)).rejects.toThrow(/config/i);
     });
   });
 
-  it("falls back to the default preset when an existing preset file is empty", async () => {
+  it("requires local configuration when an existing preset file is empty", async () => {
     await withTempDir(async (workspace) => {
       await mkdir(join(workspace, ".johnsons"), { recursive: true });
       await writeFile(presetPath(workspace), "{}", "utf8");
 
-      await expect(store().list(workspace)).resolves.toEqual({ default: defaultPolicy });
+      await expect(store().list(workspace)).rejects.toThrow(/config/i);
     });
   });
 
