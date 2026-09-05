@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { Buffer } from "node:buffer";
 import type { Role } from "../domain/types.js";
 import type { RoleAgent } from "../orchestrator/run-controller.js";
-import { defaultPolicy, rolePrompts, type Policy, type RoleConfig } from "../policy/config.js";
+import { rolePrompts, type Policy, type RoleConfig } from "../policy/config.js";
 import type { AgentProcess, AgentProcessResult, RpcEvent } from "../rpc/agent-process.js";
 import { PiRpcAgentProcess } from "../rpc/agent-process.js";
 import { JsonlDecoder } from "../rpc/jsonl.js";
@@ -76,7 +76,7 @@ export const createAgentProcessFactory = (
 const defaultModelCatalogDependencies: ModelCatalogDependencies = { mkdtemp, rm, spawn };
 
 export const loadAvailableModels = async (
-  model = defaultPolicy.roles.architect.model,
+  model: string,
   dependencies = defaultModelCatalogDependencies,
 ): Promise<ReadonlyArray<string>> => {
   const sessionDir = await dependencies.mkdtemp(join(tmpdir(), "the-johnsons-models-"));

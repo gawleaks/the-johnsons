@@ -221,7 +221,7 @@ export interface MainDependencies {
   readonly randomUUID: () => string;
   readonly createTerminalIo: () => TerminalIo;
   readonly presetStore: { list(workspace: string): Promise<Readonly<Record<string, Policy>>>; save?(workspace: string, name: string, policy: Policy): Promise<void> }; 
-  readonly loadAvailableModels: (model?: string) => Promise<ReadonlyArray<string>>;
+  readonly loadAvailableModels: (model: string) => Promise<ReadonlyArray<string>>;
   readonly validatePiVersion: () => Promise<void>;
   readonly workspaceManager: {
     prepare(workspace: string, runId: string): Promise<string>;
@@ -291,6 +291,9 @@ const validateInput = async <T>(operation: () => Promise<T> | T): Promise<T> => 
 const configure = async (command: Extract<Command, { type: "config" }>, dependencies: MainDependencies): Promise<number> => {
   const io = dependencies.createTerminalIo();
   const { policy } = await selectPolicy(io, { default: localPolicyTemplate });
+  await validateInput(() => {
+    if (roles.some((role) => policy.roles[role].model.trim() === "")) throw new Error("A model is required for every role");
+  });
   const save = dependencies.presetStore.save;
   if (save === undefined) throw new Error("Preset saving is unavailable");
   await validateInput(() => save(command.workspace, "default", validatePolicy(policy)));

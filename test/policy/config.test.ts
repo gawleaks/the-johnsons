@@ -67,6 +67,13 @@ describe("policy config", () => {
     );
   });
 
+  it("rejects blank role models", () => {
+    expect(() => validatePolicy({
+      ...policy(),
+      roles: { ...policy().roles, architect: { ...policy().roles.architect, model: " " } },
+    })).toThrow(/model/i);
+  });
+
   it("rejects reviewer edit write and bash tools", () => {
     expect(() => validatePolicy(policy(["read", "edit"]))).toThrow(/reviewer/i);
     expect(() => validatePolicy(policy(["read", "write"]))).toThrow(/reviewer/i);

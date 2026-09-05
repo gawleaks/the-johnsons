@@ -55,6 +55,10 @@ export const validatePolicy = (policy: Policy): Policy => {
     throw new Error("maxReviewAttempts must be at least 1");
   }
 
+  if (Object.values(policy.roles).some((role) => role.model.trim() === "")) {
+    throw new Error("Every role requires a model");
+  }
+
   validateReviewerTools(policy);
   return policy;
 };

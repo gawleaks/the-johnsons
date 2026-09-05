@@ -31,13 +31,14 @@ It sends a minimal prompt to Pi RPC and creates only a temporary session directo
 ## Commands
 
 ```bash
+node dist/cli.js config --workspace /path/to/project
 node dist/cli.js start --workspace /path/to/project
 node dist/cli.js start --workspace /path/to/project --preset default
 node dist/cli.js resume <run-id> --workspace /path/to/project
 node dist/cli.js runs --workspace /path/to/project
 ```
 
-`start` loads saved presets from `/path/to/project/.johnsons/presets.json`, lets you confirm per-role model and thinking overrides in the terminal, validates the chosen models against Pi's live model catalog, writes `policy.json`, then starts the run.
+Run `config` first to enter a model ID for Architect, Planner, Developer, and Reviewer. It creates the ignored local file `/path/to/project/.johnsons/presets.json`; model/provider choices never need to live in the repository. `start` loads that file, lets you confirm per-role model and thinking overrides, validates selected models against Pi's live model catalog, writes `policy.json`, then starts the run.
 
 `resume` reuses the persisted `policy.json` from the selected run. It does **not** re-read current defaults or preset changes.
 
@@ -45,7 +46,7 @@ node dist/cli.js runs --workspace /path/to/project
 
 ## Presets and role overrides
 
-Presets are policies saved in `.johnsons/presets.json`. The default preset is `default` when no preset file exists. You can pin a preset with `--preset <name>`, then override individual role models or thinking levels during `start`.
+Presets are local policies saved in `.johnsons/presets.json`; `start` requires a nonempty local file. `presets.example.json` is a tracked schema template only: copy it to the local path and replace every `provider/model` placeholder, or use `config`. You can pin a preset with `--preset <name>`, then override individual role models or thinking levels during `start`.
 
 Reviewer configs must stay read-only. Reviewer tools cannot include `edit`, `write`, or `bash`.
 

@@ -21,6 +21,15 @@
 
 ---
 
+## Implementation status — 2026-07-26
+
+- **Complete:** Task 10a controller slices 1–4; Slice 10b.1 parser/file-backed presets; Slice 10b.2 terminal UI/Pi role-agent composition.
+- **Verification:** 176 tests, typecheck, and build pass. Slice reviews approved, including strict persisted-policy validation, credential-safe catalog errors, model catalog validation, terminal interaction behavior, and role-process isolation.
+- **Complete:** Slice 10b.3 CLI composition, `start`/`resume`/`runs`, persisted run policy, root-owned artifacts/sessions, Git-worktree Pi cwd, and README.
+- **Verification:** 190 tests, typecheck, build, and the empty-workspace `runs` CLI smoke test pass. Slice 10b.3 review fixes include resumed-model validation, validation exit codes, and safe persisted execution-workspace validation.
+- **Remaining:** final full-project review and an opt-in real Pi smoke test.
+- **Working tree:** resolved issue records 001–003 are deleted but uncommitted; this plan status update is uncommitted.
+
 ## Slice 10b.1: File-backed policy presets and command parser
 
 **Files:**
@@ -48,9 +57,9 @@ export interface PresetStore {
 }
 ```
 
-- Presets live at `<workspace>/.johnsons/presets.json`; the default preset name is `default` and resolves to `defaultPolicy` if no file exists.
+- Presets live at `<workspace>/.johnsons/presets.json`; create the local `default` preset first with `the-johnsons config --workspace <workspace>`. Missing or empty files are rejected.
 
-- [ ] **Step 1: Write failing parser/preset tests**
+- [x] **Step 1: Write failing parser/preset tests**
 
 ```ts
 it("parses start with workspace and preset", () => {
@@ -69,13 +78,13 @@ it("uses default policy when no preset file exists", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `npm test -- test/cli/arguments.test.ts test/cli/presets.test.ts`
 
 Expected: FAIL because the CLI modules do not exist.
 
-- [ ] **Step 3: Implement minimal parser and atomic preset store**
+- [x] **Step 3: Implement minimal parser and atomic preset store**
 
 ```ts
 export const parseCommand = (argv: readonly string[]): Command => {
@@ -91,13 +100,13 @@ export const parseCommand = (argv: readonly string[]): Command => {
 
 Use `ArtifactStore`’s existing atomic file primitive (`atomicWrite`) for presets. Parse JSON into `Policy` with `validatePolicy`; reject unknown preset names and malformed persisted policies. Never include environment variables, auth values, or provider credentials in a preset.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `npm test -- test/cli/arguments.test.ts test/cli/presets.test.ts && npm run typecheck && npm run build`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/arguments.ts src/cli/presets.ts test/cli/arguments.test.ts test/cli/presets.test.ts
@@ -106,9 +115,9 @@ git commit -m "feat: add CLI commands and policy presets"
 
 ### Slice 10b.1 Review
 
-- [ ] Run: `npm test -- test/cli/arguments.test.ts test/cli/presets.test.ts && npm run typecheck && npm run build`
-- [ ] Confirm parser rejects unsupported input and preset persistence is path-contained, atomic, credential-free, and policy-validated.
-- [ ] Obtain reviewer approval before Slice 10b.2.
+- [x] Run: `npm test -- test/cli/arguments.test.ts test/cli/presets.test.ts && npm run typecheck && npm run build`
+- [x] Confirm parser rejects unsupported input and preset persistence is path-contained, atomic, credential-free, and policy-validated.
+- [x] Obtain reviewer approval before Slice 10b.2.
 
 ## Slice 10b.2: Terminal UI and Pi role-agent composition
 
@@ -134,7 +143,7 @@ export interface TerminalIo {
 - Produces `PiRoleAgent implements RoleAgent`, maintaining one `PiRpcAgentProcess` per role and returning the final assistant text from each `AgentProcessResult`.
 - Produces `validateModels(policy, modelCatalog): void` that rejects any unavailable configured `provider/model` before a run starts.
 
-- [ ] **Step 1: Write failing UI/composition tests**
+- [x] **Step 1: Write failing UI/composition tests**
 
 ```ts
 it("returns no approval until terminal confirmation is true", async () => {
@@ -152,13 +161,13 @@ it("returns the final assistant text from the configured role process", async ()
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `npm test -- test/ui/terminal.test.ts test/cli/role-agent.test.ts`
 
 Expected: FAIL because UI and role-agent modules do not exist.
 
-- [ ] **Step 3: Implement minimal terminal and role adapters**
+- [x] **Step 3: Implement minimal terminal and role adapters**
 
 Use `node:readline/promises` only in the production `createTerminalIo()` adapter. Tests inject `TerminalIo`; they never read stdin. `choose` repeats only for an invalid option; `confirm` accepts only `y`/`yes` as true. Display policy assignment before confirmation, including role/model/thinking values.
 
@@ -172,13 +181,13 @@ It caches the agent by role, calls `process.prompt(handoff)`, finds the last ass
 
 Model validation uses a short-lived Pi RPC child started with a lightweight configured model, sends `{ "id": "catalog", "type": "get_available_models" }`, and compares returned `provider/id` strings. Keep protocol code behind `loadAvailableModels()`; tests inject a catalog loader.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `npm test -- test/ui/terminal.test.ts test/cli/role-agent.test.ts && npm run typecheck && npm run build`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/ui/terminal.ts src/cli/role-agent.ts test/ui/terminal.test.ts test/cli/role-agent.test.ts
@@ -187,9 +196,9 @@ git commit -m "feat: add terminal UI and Pi role agents"
 
 ### Slice 10b.2 Review
 
-- [ ] Run: `npm test -- test/ui/terminal.test.ts test/cli/role-agent.test.ts && npm run typecheck && npm run build`
-- [ ] Confirm all model assignments are shown/validated before dispatch, UI remains injectable, role processes remain isolated by role, and no credentials are stored/displayed.
-- [ ] Obtain reviewer approval before Slice 10b.3.
+- [x] Run: `npm test -- test/ui/terminal.test.ts test/cli/role-agent.test.ts && npm run typecheck && npm run build`
+- [x] Confirm all model assignments are shown/validated before dispatch, UI remains injectable, role processes remain isolated by role, and no credentials are stored/displayed.
+- [x] Obtain reviewer approval before Slice 10b.3.
 
 ## Slice 10b.3: CLI composition, runs listing, and documentation
 
@@ -203,7 +212,7 @@ git commit -m "feat: add terminal UI and Pi role agents"
 - Consumes `parseCommand`, `PresetStore`, `TerminalRunUi`, `PiRoleAgent`, `WorkspaceManager`, `ArtifactStore`, `RunController`, and `createRunState`.
 - Produces `main(argv, dependencies): Promise<number>` for testable command composition.
 
-- [ ] **Step 1: Write failing end-to-end CLI composition tests**
+- [x] **Step 1: Write failing end-to-end CLI composition tests**
 
 ```ts
 it("starts a run after policy confirmation and persists its selected policy", async () => {
@@ -223,13 +232,13 @@ it("lists durable run IDs and phases", async () => {
 });
 ```
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `npm test -- test/cli.test.ts`
 
 Expected: FAIL because `src/cli.ts` does not exist.
 
-- [ ] **Step 3: Implement command composition**
+- [x] **Step 3: Implement command composition**
 
 `start`:
 
@@ -262,7 +271,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
 
 Translate validation/user-input errors to exit code `2`; unexpected errors to `1`, without stack traces unless `JOHNSONS_DEBUG=1`.
 
-- [ ] **Step 4: Write the operational README**
+- [x] **Step 4: Write the operational README**
 
 Document exact setup and commands:
 
@@ -276,13 +285,13 @@ node dist/cli.js runs --workspace /path/to/project
 
 Include Pi installation/authentication, role model preset/override selection, metadata versus Git mode, reviewer read-only enforcement caveat, run artifact layout, resumability, no-secret policy, and the explicit statement that subprocesses are not a security sandbox.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `npm test -- test/cli.test.ts && npm test && npm run typecheck && npm run build && node dist/cli.js runs --workspace "$(mktemp -d)"`
 
 Expected: all tests/build pass; `runs` exits 0 with no run output.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/cli.ts src/storage/artifact-store.ts test/cli.test.ts test/storage/artifact-store.test.ts README.md package.json
@@ -291,9 +300,9 @@ git commit -m "feat: add harness CLI"
 
 ### Slice 10b.3 Review
 
-- [ ] Run: `npm test && npm run typecheck && npm run build`
-- [ ] Confirm `start` persists selected policy before dispatch; `resume` uses `policy.json`; `runs` is read-only; all role processes close in `finally`; README includes every required safety/setup statement.
-- [ ] Obtain reviewer approval before final project verification.
+- [x] Run: `npm test && npm run typecheck && npm run build`
+- [x] Confirm `start` persists selected policy before dispatch; `resume` uses `policy.json`; `runs` is read-only; all role processes close in `finally`; README includes every required safety/setup statement.
+- [x] Obtain reviewer approval before final project verification.
 
 ## Plan self-review
 
