@@ -101,6 +101,7 @@ describe("validatePiVersion", () => {
     expect(isCompatiblePiVersion("0.81.1", "1.81.1")).toBe(false);
     expect(isCompatiblePiVersion("0.81.1", "0.81.1-beta")).toBe(false);
     expect(isCompatiblePiVersion("0.81.1", "0.81")).toBe(false);
+    expect(isCompatiblePiVersion("0.81.1", "0.81.01")).toBe(false);
   });
 
   it("accepts the package-pinned Pi version and rejects a mismatch", async () => {

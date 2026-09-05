@@ -181,7 +181,7 @@ const commandAdapter: CommandAdapter = { run: runCommand };
 const supportedPiVersion = createRequire(import.meta.url)("../package.json").dependencies["@earendil-works/pi-coding-agent"] as string;
 
 export const isCompatiblePiVersion = (expected: string, actual: string): boolean => {
-  const parse = (version: string): ReadonlyArray<string> | undefined => version.match(/^(\d+)\.(\d+)\.\d+$/)?.slice(1);
+  const parse = (version: string): ReadonlyArray<string> | undefined => version.match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/)?.slice(1);
   const expectedParts = parse(expected);
   const actualParts = parse(actual);
   return expectedParts !== undefined && actualParts !== undefined && expectedParts[0] === actualParts[0] && expectedParts[1] === actualParts[1];
