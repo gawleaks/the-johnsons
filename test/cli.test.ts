@@ -2,15 +2,28 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
-import { createProductionDependencies, isCompatiblePiVersion, main, validatePiVersion, workspaceSafetyFor } from "../src/cli.js";
-import { createRunState, type Role, type RunState } from "../src/domain/types.js";
+import {
+  createProductionDependencies,
+  isCompatiblePiVersion,
+  main,
+  validatePiVersion,
+  workspaceSafetyFor,
+} from "../src/cli.js";
+import {
+  createRunState,
+  type Role,
+  type RunState,
+} from "../src/domain/types.js";
 import { defaultPolicy, type Policy } from "../src/policy/config.js";
 import { ArtifactStore } from "../src/storage/artifact-store.js";
 import type { TerminalIo } from "../src/ui/terminal.js";
 
-const tempDir = async (): Promise<string> => mkdtemp(join(tmpdir(), "johnsons-cli-"));
+const tempDir = async (): Promise<string> =>
+  mkdtemp(join(tmpdir(), "johnsons-cli-"));
 
-const withTempDir = async <T>(run: (workspace: string) => Promise<T>): Promise<T> => {
+const withTempDir = async <T>(
+  run: (workspace: string) => Promise<T>,
+): Promise<T> => {
   const workspace = await tempDir();
 
   try {
@@ -20,16 +33,25 @@ const withTempDir = async <T>(run: (workspace: string) => Promise<T>): Promise<T
   }
 };
 
-const runRoot = (workspace: string, runId: string): string => join(workspace, ".johnsons", "runs", runId);
-const policyPath = (workspace: string, runId: string): string => join(runRoot(workspace, runId), "policy.json");
-const statePath = (workspace: string, runId: string): string => join(runRoot(workspace, runId), "state.json");
+const runRoot = (workspace: string, runId: string): string =>
+  join(workspace, ".johnsons", "runs", runId);
+const policyPath = (workspace: string, runId: string): string =>
+  join(runRoot(workspace, runId), "policy.json");
+const statePath = (workspace: string, runId: string): string =>
+  join(runRoot(workspace, runId), "state.json");
 
-const writeState = async (workspace: string, runId: string, state: RunState): Promise<void> => {
+const writeState = async (
+  workspace: string,
+  runId: string,
+  state: RunState,
+): Promise<void> => {
   await mkdir(runRoot(workspace, runId), { recursive: true });
   await writeFile(statePath(workspace, runId), JSON.stringify(state), "utf8");
 };
 
-const createIo = (preset = "default"): TerminalIo & { readonly lines: string[] } => {
+const createIo = (
+  preset = "default",
+): TerminalIo & { readonly lines: string[] } => {
   const lines: string[] = [];
 
   return {
@@ -45,7 +67,10 @@ const createIo = (preset = "default"): TerminalIo & { readonly lines: string[] }
 
 type MainDependencies = Parameters<typeof main>[1];
 
-const createDependencies = (workspace: string, overrides: Partial<MainDependencies> = {}): MainDependencies & {
+const createDependencies = (
+  workspace: string,
+  overrides: Partial<MainDependencies> = {},
+): MainDependencies & {
   readonly io: TerminalIo & { readonly lines: string[] };
   readonly roleAgent: { close(): Promise<void>; readonly closed: () => number };
 } => {
@@ -82,8 +107,12 @@ const createDependencies = (workspace: string, overrides: Partial<MainDependenci
     createRoleAgent: () => roleAgent,
     createRunController: ({ artifactStore, policy }) => ({
       start: async () => {
-        await expect(readFile(policyPath(workspace, "run-1"), "utf8")).resolves.toBe(JSON.stringify(policy));
-        await expect(artifactStore.loadState()).resolves.toEqual(createRunState("run-1", workspace));
+        await expect(
+          readFile(policyPath(workspace, "run-1"), "utf8"),
+        ).resolves.toBe(JSON.stringify(policy));
+        await expect(artifactStore.loadState()).resolves.toEqual(
+          createRunState("run-1", workspace),
+        );
         return createRunState("run-1", workspace);
       },
       resume: async () => createRunState("run-1", workspace),
@@ -106,7 +135,9 @@ describe("validatePiVersion", () => {
 
   it("accepts the package-pinned Pi version and rejects a mismatch", async () => {
     await expect(validatePiVersion()).resolves.toBeUndefined();
-    await expect(validatePiVersion("0.0.0")).rejects.toThrow(/unsupported pi version/i);
+    await expect(validatePiVersion("0.0.0")).rejects.toThrow(
+      /unsupported pi version/i,
+    );
   });
 });
 
@@ -126,7 +157,11 @@ describe("workspaceSafetyFor", () => {
 describe("production dependencies", () => {
   it("wires metadata safety into its run controller", async () => {
     await withTempDir(async (workspace) => {
-      const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));
+      const store = await ArtifactStore.create(
+        workspace,
+        "run-1",
+        createRunState("run-1", workspace),
+      );
       const controller = createProductionDependencies().createRunController({
         artifactStore: store,
         policy: defaultPolicy,
@@ -138,28 +173,87 @@ describe("production dependencies", () => {
         },
       });
 
-      expect((controller as unknown as { deps: { workspaceSafety?: unknown } }).deps.workspaceSafety).toBeDefined();
+      expect(
+        (controller as unknown as { deps: { workspaceSafety?: unknown } }).deps
+          .workspaceSafety,
+      ).toBeDefined();
     });
   });
 });
 
 describe("main", () => {
+  it("configures and persists local role models", async () => {
+    await withTempDir(async (workspace) => {
+      const saved: Array<{ name: string; policy: Policy }> = [];
+      const answers = [
+        "a/model",
+        "",
+        "p/model",
+        "",
+        "d/model",
+        "",
+        "r/model",
+        "",
+      ];
+      const dependencies = createDependencies(workspace, {
+        createTerminalIo: () => ({
+          choose: async () => "default",
+          confirm: async () => true,
+          ask: async () => answers.shift() ?? "",
+          write: () => undefined,
+        }),
+        presetStore: {
+          list: async () => ({ default: defaultPolicy }),
+          save: async (_workspace, name, policy) => {
+            saved.push({ name, policy });
+          },
+        },
+      });
+
+      await expect(
+        main(["config", "--workspace", workspace], dependencies),
+      ).resolves.toBe(0);
+      expect(saved).toHaveLength(1);
+      expect(saved[0]).toMatchObject({
+        name: "default",
+        policy: {
+          roles: {
+            architect: { model: "a/model" },
+            reviewer: { model: "r/model" },
+          },
+        },
+      });
+    });
+  });
+
   it("starts a run after policy confirmation and persists its selected policy", async () => {
     await withTempDir(async (workspace) => {
       const dependencies = createDependencies(workspace);
 
-      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(0);
-      await expect(readFile(policyPath(workspace, "run-1"), "utf8")).resolves.toBe(JSON.stringify(defaultPolicy));
+      await expect(
+        main(["start", "--workspace", workspace], dependencies),
+      ).resolves.toBe(0);
+      await expect(
+        readFile(policyPath(workspace, "run-1"), "utf8"),
+      ).resolves.toBe(JSON.stringify(defaultPolicy));
       expect(dependencies.roleAgent.closed()).toBe(1);
     });
   });
 
   it("uses root-owned artifacts with prepared git cwd for start and resume", async () => {
     await withTempDir(async (workspace) => {
-      const preparedWorkspace = join(workspace, ".johnsons", "worktrees", "run-1");
+      const preparedWorkspace = join(
+        workspace,
+        ".johnsons",
+        "worktrees",
+        "run-1",
+      );
       let mode: Policy["checkpointMode"] | undefined;
       let stateWorkspace: string | undefined;
-      const roleCalls: Array<{ workspace: string; executionWorkspace: string }> = [];
+      const roleCalls: Array<{
+        workspace: string;
+        executionWorkspace: string;
+      }> = [];
       const gitPolicy: Policy = { ...defaultPolicy, checkpointMode: "git" };
 
       const dependencies = createDependencies(workspace, {
@@ -184,7 +278,12 @@ describe("main", () => {
           },
           prepare: async () => preparedWorkspace,
         },
-        createRoleAgent: (_policy, _runId, runWorkspace, executionWorkspace) => {
+        createRoleAgent: (
+          _policy,
+          _runId,
+          runWorkspace,
+          executionWorkspace,
+        ) => {
           roleCalls.push({ workspace: runWorkspace, executionWorkspace });
 
           return {
@@ -200,19 +299,30 @@ describe("main", () => {
           start: async () => {
             const state = await artifactStore.loadState();
             stateWorkspace = state.workspace;
-            await expect(readFile(policyPath(workspace, "run-1"), "utf8")).resolves.toBe(JSON.stringify(policy));
+            await expect(
+              readFile(policyPath(workspace, "run-1"), "utf8"),
+            ).resolves.toBe(JSON.stringify(policy));
             return state;
           },
           resume: async () => createRunState("run-1", preparedWorkspace),
         }),
       });
 
-      await expect(main(["start", "--workspace", workspace, "--preset", "git"], dependencies)).resolves.toBe(0);
+      await expect(
+        main(
+          ["start", "--workspace", workspace, "--preset", "git"],
+          dependencies,
+        ),
+      ).resolves.toBe(0);
       expect(mode).toBe("git");
       expect(stateWorkspace).toBe(preparedWorkspace);
-      expect(roleCalls).toEqual([{ workspace, executionWorkspace: preparedWorkspace }]);
+      expect(roleCalls).toEqual([
+        { workspace, executionWorkspace: preparedWorkspace },
+      ]);
 
-      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(0);
+      await expect(
+        main(["resume", "run-1", "--workspace", workspace], dependencies),
+      ).resolves.toBe(0);
       expect(roleCalls).toEqual([
         { workspace, executionWorkspace: preparedWorkspace },
         { workspace, executionWorkspace: preparedWorkspace },
@@ -232,7 +342,11 @@ describe("main", () => {
           },
         },
       };
-      const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));
+      const store = await ArtifactStore.create(
+        workspace,
+        "run-1",
+        createRunState("run-1", workspace),
+      );
       await store.writeJson("policy.json", persistedPolicy);
       const createdPolicies: Policy[] = [];
       const roleWorkspaces: string[] = [];
@@ -246,11 +360,20 @@ describe("main", () => {
           persistedPolicy.roles.developer.model,
           persistedPolicy.roles.reviewer.model,
         ],
-        createRoleAgent: (_policy, _runId, runWorkspace, executionWorkspace) => {
+        createRoleAgent: (
+          _policy,
+          _runId,
+          runWorkspace,
+          executionWorkspace,
+        ) => {
           roleWorkspaces.push(`${runWorkspace} -> ${executionWorkspace}`);
           return {
-            async prompt(): Promise<string> { return ""; },
-            async close(): Promise<void> { return; },
+            async prompt(): Promise<string> {
+              return "";
+            },
+            async close(): Promise<void> {
+              return;
+            },
           };
         },
         createRunController: ({ policy }) => {
@@ -262,7 +385,9 @@ describe("main", () => {
         },
       });
 
-      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(0);
+      await expect(
+        main(["resume", "run-1", "--workspace", workspace], dependencies),
+      ).resolves.toBe(0);
       expect(createdPolicies).toEqual([persistedPolicy]);
       expect(roleWorkspaces).toEqual([`${workspace} -> ${workspace}`]);
       expect(dependencies.roleAgent.closed()).toBe(0);
@@ -278,7 +403,11 @@ describe("main", () => {
           reviewer: { ...defaultPolicy.roles.reviewer, model: "missing/model" },
         },
       };
-      const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));
+      const store = await ArtifactStore.create(
+        workspace,
+        "run-1",
+        createRunState("run-1", workspace),
+      );
       await store.writeJson("policy.json", policy);
       let agents = 0;
       const dependencies = createDependencies(workspace, {
@@ -286,13 +415,19 @@ describe("main", () => {
         createRoleAgent: () => {
           agents += 1;
           return {
-            async prompt(): Promise<string> { return ""; },
-            async close(): Promise<void> { return; },
+            async prompt(): Promise<string> {
+              return "";
+            },
+            async close(): Promise<void> {
+              return;
+            },
           };
         },
       });
 
-      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(2);
+      await expect(
+        main(["resume", "run-1", "--workspace", workspace], dependencies),
+      ).resolves.toBe(2);
       expect(agents).toBe(0);
     });
   });
@@ -303,14 +438,20 @@ describe("main", () => {
         validatePiVersion: async () => validatePiVersion("0.0.0"),
       });
 
-      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(2);
+      await expect(
+        main(["resume", "run-1", "--workspace", workspace], dependencies),
+      ).resolves.toBe(2);
       expect(dependencies.roleAgent.closed()).toBe(0);
     });
   });
 
   it("closes the role agent when resume fails", async () => {
     await withTempDir(async (workspace) => {
-      const store = await ArtifactStore.create(workspace, "run-1", createRunState("run-1", workspace));
+      const store = await ArtifactStore.create(
+        workspace,
+        "run-1",
+        createRunState("run-1", workspace),
+      );
       await store.writeJson("policy.json", defaultPolicy);
       let closes = 0;
       const dependencies = createDependencies(workspace, {
@@ -330,19 +471,32 @@ describe("main", () => {
         }),
       });
 
-      await expect(main(["resume", "run-1", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      await expect(
+        main(["resume", "run-1", "--workspace", workspace], dependencies),
+      ).resolves.toBe(1);
       expect(closes).toBe(1);
     });
   });
 
   it("lists durable run ids and phases in lexical order", async () => {
     await withTempDir(async (workspace) => {
-      await writeState(workspace, "run-2", { ...createRunState("run-2", workspace), phase: "planning" });
-      await writeState(workspace, "run-1", { ...createRunState("run-1", workspace), phase: "completed" });
+      await writeState(workspace, "run-2", {
+        ...createRunState("run-2", workspace),
+        phase: "planning",
+      });
+      await writeState(workspace, "run-1", {
+        ...createRunState("run-1", workspace),
+        phase: "completed",
+      });
       const dependencies = createDependencies(workspace);
 
-      await expect(main(["runs", "--workspace", workspace], dependencies)).resolves.toBe(0);
-      expect(dependencies.io.lines).toEqual(["run-1\tcompleted", "run-2\tplanning"]);
+      await expect(
+        main(["runs", "--workspace", workspace], dependencies),
+      ).resolves.toBe(0);
+      expect(dependencies.io.lines).toEqual([
+        "run-1\tcompleted",
+        "run-2\tplanning",
+      ]);
     });
   });
 
@@ -350,7 +504,9 @@ describe("main", () => {
     await withTempDir(async (workspace) => {
       const dependencies = createDependencies(workspace);
 
-      await expect(main(["runs", "--workspace", workspace], dependencies)).resolves.toBe(0);
+      await expect(
+        main(["runs", "--workspace", workspace], dependencies),
+      ).resolves.toBe(0);
       expect(dependencies.io.lines).toEqual([]);
     });
   });
@@ -360,10 +516,17 @@ describe("main", () => {
       let prepares = 0;
       const dependencies = createDependencies(workspace, {
         validatePiVersion: async () => validatePiVersion("0.0.0"),
-        workspaceManager: { prepare: async () => { prepares += 1; return workspace; } },
+        workspaceManager: {
+          prepare: async () => {
+            prepares += 1;
+            return workspace;
+          },
+        },
       });
 
-      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(2);
+      await expect(
+        main(["start", "--workspace", workspace], dependencies),
+      ).resolves.toBe(2);
       expect(prepares).toBe(0);
     });
   });
@@ -371,20 +534,28 @@ describe("main", () => {
   it("returns 1 when Pi version validation cannot launch", async () => {
     await withTempDir(async (workspace) => {
       const dependencies = createDependencies(workspace, {
-        validatePiVersion: async () => { throw new Error("Unable to validate Pi version"); },
+        validatePiVersion: async () => {
+          throw new Error("Unable to validate Pi version");
+        },
       });
 
-      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      await expect(
+        main(["start", "--workspace", workspace], dependencies),
+      ).resolves.toBe(1);
     });
   });
 
   it("returns 1 when model catalog loading fails", async () => {
     await withTempDir(async (workspace) => {
       const dependencies = createDependencies(workspace, {
-        loadAvailableModels: async () => { throw new Error("catalog unavailable"); },
+        loadAvailableModels: async () => {
+          throw new Error("catalog unavailable");
+        },
       });
 
-      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(1);
+      await expect(
+        main(["start", "--workspace", workspace], dependencies),
+      ).resolves.toBe(1);
     });
   });
 
@@ -408,7 +579,9 @@ describe("main", () => {
         },
       });
 
-      await expect(main(["start", "--workspace", workspace], dependencies)).resolves.toBe(2);
+      await expect(
+        main(["start", "--workspace", workspace], dependencies),
+      ).resolves.toBe(2);
       expect(prepareCalls).toBe(0);
       expect(errors.join("")).toMatch(/unavailable models/i);
     });
@@ -426,7 +599,9 @@ describe("main", () => {
         },
       });
 
-      await expect(main(["resume", "..", "--workspace", workspace], dependencies)).resolves.toBe(2);
+      await expect(
+        main(["resume", "..", "--workspace", workspace], dependencies),
+      ).resolves.toBe(2);
       expect(errors.join("")).toMatch(/invalid run id/i);
     });
   });
@@ -446,12 +621,16 @@ describe("main", () => {
           },
         },
         createRunController: () => ({
-          start: async () => { throw failure; },
+          start: async () => {
+            throw failure;
+          },
           resume: async () => createRunState("run-1", workspace),
         }),
       });
 
-      await expect(main(["start", "--workspace", workspace], plain)).resolves.toBe(1);
+      await expect(
+        main(["start", "--workspace", workspace], plain),
+      ).resolves.toBe(1);
       expect(plainErrors.join("")).toContain("boom");
       expect(plainErrors.join("")).not.toContain("at line");
 
@@ -464,12 +643,16 @@ describe("main", () => {
           },
         },
         createRunController: () => ({
-          start: async () => { throw failure; },
+          start: async () => {
+            throw failure;
+          },
           resume: async () => createRunState("run-1", workspace),
         }),
       });
 
-      await expect(main(["start", "--workspace", workspace], debug)).resolves.toBe(1);
+      await expect(
+        main(["start", "--workspace", workspace], debug),
+      ).resolves.toBe(1);
       expect(debugErrors.join("")).toContain("at line");
     });
   });
