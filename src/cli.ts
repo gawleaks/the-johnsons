@@ -290,7 +290,7 @@ const validateInput = async <T>(operation: () => Promise<T> | T): Promise<T> => 
 
 const configure = async (command: Extract<Command, { type: "config" }>, dependencies: MainDependencies): Promise<number> => {
   const io = dependencies.createTerminalIo();
-  const { policy } = await selectPolicy(io, { default: localPolicyTemplate });
+  const { policy } = await validateInput(() => selectPolicy(io, { default: localPolicyTemplate }));
   await validateInput(() => {
     if (roles.some((role) => policy.roles[role].model.trim() === "")) throw new Error("A model is required for every role");
   });
