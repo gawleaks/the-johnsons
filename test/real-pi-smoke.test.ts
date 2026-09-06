@@ -32,9 +32,9 @@ describe("real Pi RPC smoke", () => {
       const text = typeof content === "string"
         ? content
         : Array.isArray(content)
-          ? content.filter((part): part is { text: string } => typeof part === "object" && part !== null && typeof (part as { text?: unknown }).text === "string").map((part) => part.text).join("")
+          ? content.filter((part): part is { type: "text"; text: string } => typeof part === "object" && part !== null && (part as { type?: unknown }).type === "text" && typeof (part as { text?: unknown }).text === "string").map((part) => part.text).join("")
           : "";
-      expect(text.trim()).toBe("smoke-ok");
+      expect(text).toBe("smoke-ok");
     } finally {
       await agent.close();
       await rm(root, { recursive: true, force: true });
