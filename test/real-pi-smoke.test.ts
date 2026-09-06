@@ -25,7 +25,10 @@ describe("real Pi RPC smoke", () => {
     try {
       await agent.start();
       const result = await agent.prompt("Reply with exactly: smoke-ok");
-      expect(result.messages).toContainEqual({ role: "assistant", content: "smoke-ok" });
+      expect(result.messages).toContainEqual(expect.objectContaining({
+        role: "assistant",
+        content: [expect.objectContaining({ type: "text", text: "smoke-ok" })],
+      }));
     } finally {
       await agent.close();
       await rm(root, { recursive: true, force: true });
