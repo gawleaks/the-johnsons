@@ -27,11 +27,19 @@ const promptText = (role: Role, handoff: string): string =>
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const isAssistantMessage = (value: unknown): value is { readonly role: "assistant"; readonly content: string } =>
-  isRecord(value) && value.role === "assistant" && typeof value.content === "string";
+const isAssistantMessage = (value: unknown): value is Record<string, unknown> => isRecord(value) && value.role === "assistant";
 
-const assistantText = (messages: ReadonlyArray<unknown>): string | undefined =>
-  [...messages].reverse().find(isAssistantMessage)?.content;
+const assistantText = (messages: ReadonlyArray<unknown>): string | undefined => {
+  const message = [...messages].reverse().find(isAssistantMessage);
+  if (!message) return undefined;
+  if (typeof message.content === "string") return message.content;
+  if (!Array.isArray(message.content)) return undefined;
+  const text = message.content
+    .filter((part): part is Record<string, unknown> => isRecord(part) && part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("");
+  return text === "" ? undefined : text;
+};
 
 const availableModels = (event: RpcEvent): ReadonlyArray<string> | undefined => {
   if (event.type !== "response" || event.id !== "catalog" || event.success === false || !Array.isArray(event.models)) {
