@@ -134,6 +134,8 @@ export class PiRpcAgentProcess implements AgentProcess {
       [
         "--mode",
         "rpc",
+        "--no-extensions",
+        "--no-skills",
         "--session-dir",
         this.#options.sessionDir,
         "--name",

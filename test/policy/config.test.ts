@@ -97,6 +97,8 @@ describe("policy config", () => {
   });
 
   it("requires structured artifacts and deviation escalation in the prompts", () => {
+    expect(rolePrompts.architect).toContain('{"question"');
+    expect(rolePrompts.architect).toContain('{"specification"');
     expect(rolePrompts.architect).toContain("Markdown");
     expect(rolePrompts.planner).toContain("JSON");
     expect(rolePrompts.developer).toContain("plan deviation");

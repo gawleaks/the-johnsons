@@ -323,6 +323,8 @@ describe("PiRpcAgentProcess", () => {
         args: [
           "--mode",
           "rpc",
+          "--no-extensions",
+          "--no-skills",
           "--session-dir",
           join(root, "session"),
           "--name",

@@ -124,7 +124,7 @@ describe("loadAvailableModels", () => {
       spawn: () => fake.child,
     });
 
-    fake.stdout.write('{"type":"response","id":"catalog","models":[{"provider":"openai","id":"gpt-5.6-sol"},{"provider":"anthropic","id":"sonnet-5"}]}' + "\n");
+    fake.stdout.write('{"type":"response","id":"catalog","success":true,"data":{"models":[{"provider":"openai","id":"gpt-5.6-sol"},{"provider":"anthropic","id":"sonnet-5"}]}}' + "\n");
 
     await expect(modelsPromise).resolves.toEqual(["openai/gpt-5.6-sol", "anthropic/sonnet-5"]);
     expect(fake.stdin.read()?.toString("utf8")).toContain('"type":"get_available_models"');
@@ -155,7 +155,7 @@ describe("loadAvailableModels", () => {
       spawn: () => fake.child,
     });
 
-    fake.stdout.write('{"type":"response","id":"catalog","models":[{"provider":"openai"}]}' + "\n");
+    fake.stdout.write('{"type":"response","id":"catalog","success":true,"data":{"models":[{"provider":"openai"}]}}' + "\n");
 
     await expect(modelsPromise).rejects.toThrow(/invalid model catalog response/i);
   });
