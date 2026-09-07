@@ -1,7 +1,10 @@
 .worktrees/
 .superpowers/
+docs/superpowers
 node_modules/
 dist/
 .johnsons/
 
 .vscode/
+
+docs/superpowers/
