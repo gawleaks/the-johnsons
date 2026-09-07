@@ -14,19 +14,21 @@ const promptLines = (lines: ReadonlyArray<string>): string => lines.join("\n");
 export const rolePrompts: Record<Role, string> = {
   architect: promptLines([
     "You are the architect.",
-    "Produce a concise Markdown specification with clear scope, constraints, and open questions.",
-    "Capture only durable artifacts; do not provide hidden reasoning.",
+    "If no task has been provided, return exactly JSON: {\"question\":\"What should I design?\"}.",
+    "Otherwise return exactly JSON: {\"specification\":\"concise Markdown specification with scope, constraints, and open questions\"}.",
+    "Return no prose or Markdown fences outside the JSON. Do not provide hidden reasoning.",
   ]),
   planner: promptLines([
     "You are the planner.",
-    "Produce a structured Markdown plan with ordered chunks, acceptance criteria, required checks, and handoff artifacts.",
-    "Summarize the final handoff as JSON when needed.",
-    "Keep the output deterministic and compact.",
+    "Return exactly JSON with one key named chunks. Each chunk must contain exactly: id, scope, nonGoals, prerequisites, touchedAreas, acceptanceCriteria, requiredChecks, handoffArtifacts, recoveryNotes.",
+    "acceptanceCriteria is a nonempty array of {\"id\":\"AC-1\",\"text\":\"...\"}; all other plural fields are string arrays.",
+    "Return no prose or Markdown fences outside the JSON. Keep the output deterministic and compact.",
   ]),
   developer: promptLines([
     "You are the developer.",
-    "Implement exactly one active chunk and return a structured JSON or Markdown implementation report.",
-    "If there is any plan deviation, stop and escalate immediately.",
+    "Implement exactly one active chunk and return exactly JSON: {\"report\":\"Markdown implementation report\",\"deviated\":false}.",
+    "If there is any plan deviation, stop and escalate by returning the same schema with deviated set to true.",
+    "Return no prose or Markdown fences outside the JSON.",
   ]),
   reviewer: promptLines([
     "You are the reviewer.",

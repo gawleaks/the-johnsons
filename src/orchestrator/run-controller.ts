@@ -38,7 +38,12 @@ export interface RunControllerDeps {
 }
 
 const parseSpecification = (output: string): string => {
-  const parsed: unknown = JSON.parse(output);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error("Invalid architect output");
+  }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("Invalid architect output");
@@ -146,7 +151,12 @@ const parsePlan = (output: string): {
   readonly definitions: ReadonlyArray<ChunkDefinition>;
   readonly chunks: ReadonlyArray<ChunkState>;
 } => {
-  const parsed: unknown = JSON.parse(output);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    throw new Error("Invalid planner output");
+  }
 
   if (!isRecord(parsed)) {
     throw new Error("Invalid planner output");

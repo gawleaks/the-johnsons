@@ -42,15 +42,14 @@ const assistantText = (messages: ReadonlyArray<unknown>): string | undefined => 
 };
 
 const availableModels = (event: RpcEvent): ReadonlyArray<string> | undefined => {
-  if (event.type !== "response" || event.id !== "catalog" || event.success === false || !Array.isArray(event.models)) {
-    return undefined;
-  }
-
-  if (event.models.some((model) => !isRecord(model) || typeof model.provider !== "string" || typeof model.id !== "string")) {
+  const response = event as unknown;
+  if (!isRecord(response) || response.type !== "response" || response.id !== "catalog" || response.success === false) return undefined;
+  const data = isRecord(response.data) ? response.data : response;
+  if (!Array.isArray(data.models)) return undefined;
+  if (data.models.some((model) => !isRecord(model) || typeof model.provider !== "string" || typeof model.id !== "string")) {
     throw new Error("Invalid model catalog response");
   }
-
-  return event.models.map((model) => `${model.provider}/${model.id}`);
+  return data.models.map((model) => `${model.provider}/${model.id}`);
 };
 
 export const validateModels = (policy: Policy, modelCatalog: ReadonlyArray<string>): void => {
@@ -82,6 +81,7 @@ export const createAgentProcessFactory = (
     });
 
 const defaultModelCatalogDependencies: ModelCatalogDependencies = { mkdtemp, rm, spawn };
+const modelCatalogTimeoutMs = 15_000;
 
 export const loadAvailableModels = async (
   model: string,
@@ -90,7 +90,7 @@ export const loadAvailableModels = async (
   const sessionDir = await dependencies.mkdtemp(join(tmpdir(), "the-johnsons-models-"));
   const child = dependencies.spawn(
     "pi",
-    ["--mode", "rpc", "--session-dir", sessionDir, "--name", "model-catalog", "--model", model],
+    ["--mode", "rpc", "--no-extensions", "--session-dir", sessionDir, "--name", "model-catalog", "--model", model],
     { stdio: ["pipe", "pipe", "pipe"] },
   );
   const decoder = new JsonlDecoder();
@@ -99,9 +99,11 @@ export const loadAvailableModels = async (
     const models = await new Promise<ReadonlyArray<string>>((resolve, reject) => {
       let stderr = "";
       let done = false;
+      const timeout = setTimeout(() => finish(new Error("Timed out loading model catalog")), modelCatalogTimeoutMs);
       const finish = (error?: Error, result?: ReadonlyArray<string>): void => {
         if (done) return;
         done = true;
+        clearTimeout(timeout);
         child.stdout.off("data", onStdout);
         child.stderr.off("data", onStderr);
         child.off("error", onError);
