@@ -1,6 +1,8 @@
 # the-johnsons
 
-Terminal harness for running the Johnsons workflow with Pi role agents.
+The Johnsons is a terminal harness that coordinates Pi agents in architect, planner, developer, and reviewer roles to take a software task from specification through implementation and review. It supports configurable role models, persisted workflow artifacts, resumable runs, and optional isolated Git worktrees.
+
+The name originated from the two FBI agents named Johnson in _Die Hard_.
 
 ## Setup
 
